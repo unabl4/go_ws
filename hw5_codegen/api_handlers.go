@@ -14,7 +14,7 @@ import (
 
 // ---
 
-type ApiResponse struct {
+type apiResponse struct {
 	Error string 		 `json:"error"`
 	Response interface{} `json:"response,omitempty"`	// any inner structure
 }
@@ -27,29 +27,24 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()	// request context
 	params := CreateParams { }
 	// TODO: Structure validation
-	// the main call
-	newUser, err := srv.Create(ctx, params)
+	srvResponse, err := srv.Create(ctx, params)	// the main call
 
+	var ar apiResponse
 	if err != nil {
 		// error
 		e := err.(ApiError)	// type assertion; convert to the ~correct type (ApiError struct is allowed to be used)
 		w.WriteHeader(e.HTTPStatus)	// -> correct HTTP error status code
-
-		r := ApiResponse { e.Err.Error(), nil }	// new api response
-		j, err := json.Marshal(r) // -> json
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return		
-		}
-		w.Write(j)
+		ar = apiResponse { e.Err.Error(), nil }	// new api response
 	} else {
 		// success
-		r := ApiResponse { "", newUser } // blank error to be present inside
-		j, err := json.Marshal(r)	// -> json
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return		
-		}
-		w.Write(j)
+		ar = apiResponse { "", srvResponse } // blank error to be present inside
 	}
+
+	// ---
+	j, err := json.Marshal(ar)	// -> json
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return		
+	}
+	w.Write(j)
 }
