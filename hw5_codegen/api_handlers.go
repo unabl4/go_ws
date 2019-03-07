@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 )
 
 // ----
@@ -25,8 +27,25 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// fmt.Fprint(w, "Request: " + r.URL.Path)
 
 	ctx := r.Context()	// request context
-	params := CreateParams { }
+	query := r.URL.Query()
+	// TODO: mapping?
+	age, _ := strconv.Atoi(query.Get("age"))
+	params := CreateParams { query.Get("login"), query.Get("account_name"), query.Get("status"), age }
 	// TODO: Structure validation
+	err := params.Validate() // return first error or nil (no errors = valid)
+	if err != nil {
+		ar := apiResponse { err.Error(), nil }
+		j, err := json.Marshal(ar)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return	
+		}
+		w.Write(j)
+		return
+	}
+
+	// ---
+
 	srvResponse, err := srv.Create(ctx, params)	// the main call
 
 	var ar apiResponse
@@ -47,4 +66,23 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return		
 	}
 	w.Write(j)
+}
+
+// ---
+
+func (cp CreateParams) Validate() error {
+	// presence
+	if len(cp.Login) <= 0 {
+		return fmt.Errorf("login must me not empty")	// 'be' -> 'me' typo
+	}
+	
+	// min len (str)
+	if len(cp.Login) < 10 {
+		return fmt.Errorf("login len must be >= 10")
+	}
+
+	// TODO: continue
+	// ... (to be continued)
+
+	return nil	// all valid
 }
