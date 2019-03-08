@@ -18,8 +18,8 @@ import (
 // ---
 
 type apiResponse struct {
-	Error string 		 `json:"error"`
-	Response interface{} `json:"response,omitempty"`	// any inner structure
+	Error    string      `json:"error"`
+	Response interface{} `json:"response,omitempty"` // any inner structure
 }
 
 // ---
@@ -27,9 +27,9 @@ type apiResponse struct {
 // json serializer
 func encodeJson(content interface{}) ([]byte, error) {
 	b := &bytes.Buffer{}
-	c := json.NewEncoder(b)	// new json encoder
+	c := json.NewEncoder(b) // new json encoder
 	c.SetEscapeHTML(false)
-	err := c.Encode(content)	// -> json
+	err := c.Encode(content) // -> json
 
 	if err != nil {
 		return nil, err
@@ -39,17 +39,17 @@ func encodeJson(content interface{}) ([]byte, error) {
 }
 
 func throwBadRequest(w http.ResponseWriter, errorMessage string) {
-	w.WriteHeader(http.StatusBadRequest)	// 400 (bad request)
+	w.WriteHeader(http.StatusBadRequest) // 400 (bad request)
 
-	ar := apiResponse { errorMessage, nil }
+	ar := apiResponse{errorMessage, nil}
 	j, err := encodeJson(ar)
-	
-	if err != nil {	// json encoding error
-		http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
-		return		
+
+	if err != nil { // json encoding error
+		http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+		return
 	}
 
-	w.Write(j)	// flush
+	w.Write(j) // flush
 }
 
 // ---
@@ -57,39 +57,39 @@ func throwBadRequest(w http.ResponseWriter, errorMessage string) {
 // the main router (for MyApi)
 func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-    case "/user/create":
-        srv.handlerUserCreate(w,r)
-    default:
+	case "/user/create":
+		srv.handlerUserCreate(w, r)
+	default:
 		// 404
-		http.NotFound(w,r)
-    }
+		http.NotFound(w, r)
+	}
 }
 
 // ====
 // handler functions (inner)
 
 func (srv *MyApi) handlerUserCreate(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()	// request context
-	query := r.URL.Query()	// primary data source
+	ctx := r.Context()     // request context
+	query := r.URL.Query() // primary data source
 	// STRUCT
 	// query -> struct extraction
-	params := CreateParams {}
-	params.Login  = query.Get("login")	// LOWERCASE!
-	params.Name   = query.Get("account_name")
+	params := CreateParams{}
+	params.Login = query.Get("login") // LOWERCASE!
+	params.Name = query.Get("account_name")
 	params.Status = query.Get("status")
 
 	// INTEGER extraction special case
 	rawAge := query.Get("age")
-	if len(rawAge) > 0 {	// isset?
-		ageInt, err := strconv.Atoi(query.Get("age"))	// -> int conversion example
+	if len(rawAge) > 0 { // isset?
+		ageInt, err := strconv.Atoi(query.Get("age")) // -> int conversion example
 
 		// special case for integers
 		if err != nil {
 			throwBadRequest(w, "age must be integer")
-			return	// stop
+			return // stop
 		}
 
-		params.Age = ageInt	// the final attribution
+		params.Age = ageInt // the final attribution
 	}
 
 	// TODO: Structure validation
@@ -97,30 +97,30 @@ func (srv *MyApi) handlerUserCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// input params are NOT valid -> BAD REQUEST
 		throwBadRequest(w, err.Error())
-		return	// stop
+		return // stop
 	}
 
 	// ---
 
-	srvResponse, err := srv.Create(ctx, params)	// the main call
+	srvResponse, err := srv.Create(ctx, params) // the main call
 
 	var ar apiResponse
 	if err != nil {
 		// error
-		e := err.(ApiError)	// type assertion; convert to the ~correct type (ApiError struct is allowed to be used)
-		w.WriteHeader(e.HTTPStatus)	// -> correct HTTP error status code
-		ar = apiResponse { e.Err.Error(), nil }	// new api response
+		e := err.(ApiError)                  // type assertion; convert to the ~correct type (ApiError struct is allowed to be used)
+		w.WriteHeader(e.HTTPStatus)          // -> correct HTTP error status code
+		ar = apiResponse{e.Err.Error(), nil} // new api response
 	} else {
 		// success
-		ar = apiResponse { "", srvResponse } // blank error to be present inside
+		ar = apiResponse{"", srvResponse} // blank error to be present inside
 	}
 
 	// ---
 
-	j,err := encodeJson(ar)
+	j, err := encodeJson(ar)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
-		return		
+		http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+		return
 	}
 
 	w.Write(j)
@@ -131,9 +131,9 @@ func (srv *MyApi) handlerUserCreate(w http.ResponseWriter, r *http.Request) {
 func (cp CreateParams) Validate() error {
 	// presence
 	if len(cp.Login) <= 0 {
-		return fmt.Errorf("login must me not empty")	// 'be' -> 'me' typo; but we keep it to pass the tests
+		return fmt.Errorf("login must me not empty") // 'be' -> 'me' typo; but we keep it to pass the tests
 	}
-	
+
 	// min len (str)
 	if len(cp.Login) < 10 {
 		return fmt.Errorf("login len must be >= 10")
@@ -142,5 +142,5 @@ func (cp CreateParams) Validate() error {
 	// TODO: continue
 	// ... (to be continued)
 
-	return nil	// all valid
+	return nil // all valid
 }
