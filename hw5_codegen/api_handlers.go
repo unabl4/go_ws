@@ -38,6 +38,22 @@ func encodeJson(content interface{}) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+func throwBadRequest(w http.ResponseWriter, errorMessage string) {
+	w.WriteHeader(http.StatusBadRequest)	// 400 (bad request)
+
+	ar := apiResponse { errorMessage, nil }
+	j, err := encodeJson(ar)
+	
+	if err != nil {	// json encoding error
+		http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
+		return		
+	}
+
+	w.Write(j)	// flush
+}
+
+// ---
+
 func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// fmt.Fprint(w, "Request: " + r.URL.Path)
 
@@ -57,17 +73,7 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// special case for integers
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)	// 400 (bad request)
-
-			ar := apiResponse { "age must be integer", nil }
-			j, err := encodeJson(ar)
-			
-			if err != nil {	// json encoding error
-				http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
-				return		
-			}
-
-			w.Write(j)
+			throwBadRequest(w, "age must be integer")
 			return	// stop
 		}
 
@@ -78,18 +84,7 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	err := params.Validate() // return first error or nil (no errors = valid)
 	if err != nil {
 		// input params are NOT valid -> BAD REQUEST
-
-		w.WriteHeader(http.StatusBadRequest)	// 400 (bad request)
-
-		ar := apiResponse { err.Error(), nil }
-		j, err := encodeJson(ar)
-		
-		if err != nil {	// json encoding error
-			http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
-			return		
-		}
-
-		w.Write(j)
+		throwBadRequest(w, err.Error())
 		return	// stop
 	}
 
