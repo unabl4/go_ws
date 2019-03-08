@@ -54,9 +54,21 @@ func throwBadRequest(w http.ResponseWriter, errorMessage string) {
 
 // ---
 
+// the main router (for MyApi)
 func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// fmt.Fprint(w, "Request: " + r.URL.Path)
+	switch r.URL.Path {
+    case "/user/create":
+        srv.handlerUserCreate(w,r)
+    default:
+		// 404
+		http.NotFound(w,r)
+    }
+}
 
+// ====
+// handler functions (inner)
+
+func (srv *MyApi) handlerUserCreate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()	// request context
 	query := r.URL.Query()	// primary data source
 	// STRUCT
