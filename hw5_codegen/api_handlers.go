@@ -49,7 +49,31 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	params.Login  = query.Get("login")	// LOWERCASE!
 	params.Name   = query.Get("account_name")
 	params.Status = query.Get("status")
-	params.Age, _ = strconv.Atoi(query.Get("age"))	// -> int conversion example
+
+	// INTEGER extraction special case
+	rawAge := query.Get("age")
+	if len(rawAge) > 0 {	// isset?
+		ageInt, err := strconv.Atoi(query.Get("age"))	// -> int conversion example
+
+		// special case for integers
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)	// 400 (bad request)
+
+			ar := apiResponse { "age must be integer", nil }
+			j, err := encodeJson(ar)
+			
+			if err != nil {	// json encoding error
+				http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
+				return		
+			}
+
+			w.Write(j)
+			return	// stop
+		}
+
+		params.Age = ageInt	// the final attribution
+	}
+
 	// TODO: Structure validation
 	err := params.Validate() // return first error or nil (no errors = valid)
 	if err != nil {
