@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,25 +24,49 @@ type apiResponse struct {
 
 // ---
 
+// json serializer
+func encodeJson(content interface{}) ([]byte, error) {
+	b := &bytes.Buffer{}
+	c := json.NewEncoder(b)	// new json encoder
+	c.SetEscapeHTML(false)
+	err := c.Encode(content)	// -> json
+
+	if err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
+}
+
 func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// fmt.Fprint(w, "Request: " + r.URL.Path)
 
 	ctx := r.Context()	// request context
-	query := r.URL.Query()
-	// TODO: mapping?
-	age, _ := strconv.Atoi(query.Get("age"))
-	params := CreateParams { query.Get("login"), query.Get("account_name"), query.Get("status"), age }
+	query := r.URL.Query()	// primary data source
+	// STRUCT
+	// query -> struct extraction
+	params := CreateParams {}
+	params.Login  = query.Get("login")	// LOWERCASE!
+	params.Name   = query.Get("account_name")
+	params.Status = query.Get("status")
+	params.Age, _ = strconv.Atoi(query.Get("age"))	// -> int conversion example
 	// TODO: Structure validation
 	err := params.Validate() // return first error or nil (no errors = valid)
 	if err != nil {
+		// input params are NOT valid -> BAD REQUEST
+
+		w.WriteHeader(http.StatusBadRequest)	// 400 (bad request)
+
 		ar := apiResponse { err.Error(), nil }
-		j, err := json.Marshal(ar)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return	
+		j, err := encodeJson(ar)
+		
+		if err != nil {	// json encoding error
+			http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
+			return		
 		}
+
 		w.Write(j)
-		return
+		return	// stop
 	}
 
 	// ---
@@ -60,11 +85,13 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ---
-	j, err := json.Marshal(ar)	// -> json
+
+	j,err := encodeJson(ar)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)	// json serialization error
 		return		
 	}
+
 	w.Write(j)
 }
 
@@ -73,7 +100,7 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (cp CreateParams) Validate() error {
 	// presence
 	if len(cp.Login) <= 0 {
-		return fmt.Errorf("login must me not empty")	// 'be' -> 'me' typo
+		return fmt.Errorf("login must me not empty")	// 'be' -> 'me' typo; but we keep it to pass the tests
 	}
 	
 	// min len (str)
