@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -9,6 +10,85 @@ import (
 	"os"
 	"strings"
 )
+
+type ApiEntry struct {
+	Url    string
+	Auth   bool
+	Method string
+}
+
+// ---
+
+func parseApiEntry(apiEntryDescriptor string) ApiEntry {
+	ae := ApiEntry{}
+	ae.Method = "GET" // default method value
+	json.Unmarshal([]byte(apiEntryDescriptor), &ae)
+	return ae
+}
+
+type Field struct {
+	Type         string      // int or string
+	DefaultValue interface{} // interface (NULLABLE)
+	Validators   []Validator
+}
+
+type Struct struct {
+	Fields []Field
+}
+
+// ---
+
+type Validator interface {
+	IsValid(input interface{}) bool
+}
+
+type MinValidator struct {
+	Value int
+}
+
+type MaxValidator struct {
+	Value int
+}
+
+type EnumValidator struct {
+	AcceptedValues []string
+}
+
+func (v MinValidator) IsValid(input interface{}) bool {
+	if s, ok := input.(string); ok { // string
+		return len(s) >= v.Value
+	}
+
+	if i, ok := input.(int); ok { // int
+		return i >= v.Value
+	}
+
+	return true
+}
+
+func (v MaxValidator) IsValid(input interface{}) bool {
+	if s, ok := input.(string); ok { // string
+		return len(s) <= v.Value
+	}
+
+	if i, ok := input.(int); ok { // int
+		return i <= v.Value
+	}
+
+	return true
+}
+
+func (v EnumValidator) IsValid(input interface{}) bool {
+	for _, v := range v.AcceptedValues {
+		if v == input {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ===
 
 // код писать тут
 func main() {
@@ -30,23 +110,37 @@ func main() {
 	for _, node := range nodeSet.Decls { // all declarations
 		// fmt.Println(node)
 
-		// g, ok := node.(*ast.GenDecl)
-		// if !ok {
-		// 	// fmt.Printf("SKIP %v is not *ast.GenDecl\n", f)
-		// 	continue
-		// }
+		g, ok := node.(*ast.GenDecl)
+		if ok {
+			// fmt.Printf("SKIP %v is not *ast.GenDecl\n", f)
+			for _, spec := range g.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					// fmt.Printf("SKIP %T is not ast.TypeSpec\n", spec)
+					continue
+				}
 
-		// // ---
+				currStruct, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					fmt.Printf("SKIP %T is not ast.StructType\n", currStruct)
+					continue
+				}
 
-		// for _, spec := range g.Specs {
-		// 	_, ok := spec.(*ast.TypeSpec)
-		// 	if !ok {
-		// 		// fmt.Printf("SKIP %T is not ast.TypeSpec\n", spec)
-		// 		continue
-		// 	} else {
-		// 		// fmt.Println(currType)
-		// 	}
-		// }
+				fmt.Println("Struct parsing >", typeSpec.Name)
+				fmt.Println(typeSpec.Type)
+				for _, e := range currStruct.Fields.List {
+					fmt.Println(e.Type)
+					if e.Tag != nil {
+						fmt.Println(e.Tag.Value)
+					}
+				}
+			}
+
+			fmt.Println("---")
+			continue // if GenDecl -> not a FuncDecl
+		}
+
+		// ---
 
 		f, ok := node.(*ast.FuncDecl)
 		if !ok {
@@ -58,7 +152,10 @@ func main() {
 				continue
 			}
 
-			fmt.Println(f.Name)
+			fmt.Println(f.Name, "/function params:")
+			for _, param := range f.Type.Params.List[1:] {
+				fmt.Println(param.Type)
+			}
 
 			for _, recv := range f.Recv.List {
 				fmt.Printf("recv type : %T", recv.Type)
@@ -79,7 +176,8 @@ func main() {
 					continue // ignore
 				}
 
-				fmt.Println(comment.Text)
+				apiEntryDescriptor := parseApiEntry(comment.Text[14:])
+				fmt.Println(apiEntryDescriptor)
 			}
 		}
 
