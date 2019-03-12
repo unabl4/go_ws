@@ -26,21 +26,37 @@ func parseApiEntry(apiEntryDescriptor string) ApiEntry {
 	return ae
 }
 
+// ---
+
 type Field struct {
-	Type         string      // int or string
-	DefaultValue interface{} // interface (NULLABLE)
-	Validators   []Validator
+	Name            string      // name of the field (raw name)
+	Type            string      // 'int' or 'string'
+	DefaultValue    interface{} // interface (NULLABLE)
+	Validators      []Validator // list of validators
+	SourceParamName string      // source field to load from
 }
 
 type Struct struct {
 	Fields []Field
 }
 
+// name of the query param to load from
+func (f Field) srcQueryParam() string {
+	if f.SourceParamName != "" { // override?
+		return f.SourceParamName
+	}
+
+	return strings.ToLower(f.Name) // lowercase (by definition)
+}
+
 // ---
 
 type Validator interface {
 	IsValid(input interface{}) bool
+	// RenderError(fieldName string) string
 }
+
+type PresenceValidator struct{} // empty (no fields needed)
 
 type MinValidator struct {
 	Value int
@@ -52,6 +68,19 @@ type MaxValidator struct {
 
 type EnumValidator struct {
 	AcceptedValues []string
+}
+
+func (v PresenceValidator) IsValid(input interface{}) bool {
+	if s, ok := input.(string); ok { // string
+		return len(s) > 0 // <> "" (not equal to an empty string)
+	}
+
+	if i, ok := input.(int); ok { // int
+		return i != 0 // by definition
+	}
+
+	// supposedly, ref types (pointers, maps, etc)
+	return input != nil
 }
 
 func (v MinValidator) IsValid(input interface{}) bool {
@@ -81,7 +110,7 @@ func (v MaxValidator) IsValid(input interface{}) bool {
 func (v EnumValidator) IsValid(input interface{}) bool {
 	for _, v := range v.AcceptedValues {
 		if v == input {
-			return true
+			return true // item found -> valid
 		}
 	}
 
