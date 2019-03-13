@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	paramsPrefix = "p"             // something we agree on (does not really matter as long as it is consistent)
+	paramsPrefix = "srv"           // something we agree on (does not really matter as long as it is consistent)
 	tagPrefix    = "`apivalidator" // has to be with the tick
 )
 
@@ -278,5 +278,93 @@ func main() {
 		// fmt.Println("---")
 	}
 
-	fmt.Println(routers)
+	// END OF PARSING
+	// THE ACTUAL CODE GENERATION STEP
+
+	for k, v := range routers {
+		// Multiplexor (mux)
+		// fmt.Println("K=", k,v)
+		for _, e := range v {
+			// Individual API endpoints
+			handlerFuncName := "handler" + e.Name
+			paramsName := v[0].Name + "Params" // ?
+
+			fmt.Printf("func (%s %s) %s(w http.ResponseWriter, r *http.Request) {\n", paramsPrefix, k, handlerFuncName)
+			fmt.Println("\tctx := r.Context()") // context is always present as the first argument
+			fmt.Println("\tquery := r.URL.Query()")
+			fmt.Println() // newline spacer
+			fmt.Printf("\tparams := %s{}\n", paramsName)
+
+			for _, p := range e.Params {
+				// fmt.Println(p)
+
+				for _, f := range p.Fields {
+					if f.Type == "string" {
+						fmt.Printf("\t%s.%s = query.Get(\"%s\")\n", "params", f.Name, f.srcQueryParam())
+					} else {
+						// extra logic for 'int' handling
+						rawVarName := "raw" + f.Name
+						intVarName := strings.ToLower(f.Name) + "Int" // already converted
+						fmt.Printf("\t%s = query.Get(\"%s\")\n", rawVarName, f.srcQueryParam())
+						fmt.Printf("\tif len(%s) > 0 {\n", rawVarName)
+						fmt.Printf("\t\t%s, err := strconv.Atoi(%s)\n", intVarName, rawVarName)
+						fmt.Println("\t\tif err != nil {")
+						fmt.Printf("\t\t\tthrowBadRequest(w, \"%s must be integer\")\n", strings.ToLower(f.Name))
+						fmt.Println("\t\t\treturn")
+						fmt.Println("\t\t}")
+
+						fmt.Println("")
+						fmt.Printf("\t\tparams.%s = %s\n", f.Name, intVarName)
+						fmt.Println("\t}")
+					}
+				}
+
+				fmt.Println()
+
+				// set default values
+				for _, f := range p.Fields {
+					if f.DefaultValue != nil {
+						var zv interface{} // zero value
+						if f.Type == "string" {
+							zv = `""`
+						} else if f.Type == "int" {
+							zv = 0
+						} else {
+							panic("unsupported type")
+						}
+						fmt.Printf("\tif %s.%s == %s {\n", "params", f.Name, zv)
+						fmt.Printf("\t\t%s.%s = \"%s\"\n", "params", f.Name, f.DefaultValue)
+						fmt.Println("\t}")
+					}
+				}
+
+				fmt.Println("")
+				fmt.Println("\terr := params.Validate()")
+				fmt.Println("\tif err != nil {")
+				fmt.Println("\t\tthrowBadRequest(w, err.Error())")
+				fmt.Println("\t\treturn")
+				fmt.Println("\t}")
+
+				fmt.Println()
+				fmt.Println("\tsrvResponse, err := srv.Create(ctx, params)")
+				fmt.Println("\tvar ar apiResponse")
+				fmt.Println("\tif err != nil {")
+				fmt.Println("\t\te := err.(ApiError)")
+				fmt.Println("\t\tw.WriteHeader(e.HTTPStatus)")
+				fmt.Println("\t\tar = apiResponse{e.Err.Error(), nil}")
+				fmt.Println("\t} else {")
+				fmt.Println("\t\tar = apiResponse{\"\", srvResponse}")
+				fmt.Println("\t}")
+
+				fmt.Println()
+				fmt.Println("\tj, err := encodeJson(ar)")
+				fmt.Println("\tif err != nil {")
+				fmt.Println("\t\thttp.Error(w, err.Error(), http.StatusInternalServerError)")
+				fmt.Println("\t\treturn")
+				fmt.Println("\t}")
+				fmt.Println("\tw.Write(j)")
+				fmt.Println("}")
+			}
+		}
+	}
 }
