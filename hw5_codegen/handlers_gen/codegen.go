@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	paramsPrefix = "p"             // something we agree on
+	paramsPrefix = "p"             // something we agree on (does not really matter as long as it is consistent)
 	tagPrefix    = "`apivalidator" // has to be with the tick
 )
 
@@ -22,6 +22,8 @@ type ApiEntry struct {
 	Url    string
 	Auth   bool
 	Method string
+
+	Router // routing description
 }
 
 // ---
@@ -35,16 +37,23 @@ func parseApiEntry(apiEntryDescriptor string) ApiEntry {
 
 // ---
 
+type Router struct { // mux
+	Name   string         // raw name
+	Params []ParamsStruct // one or more
+}
+
+// ---
+
+type ParamsStruct struct {
+	Fields []Field
+}
+
 type Field struct {
 	Name            string      // name of the field (raw, original name)
 	Type            string      // 'int' or 'string'
 	DefaultValue    interface{} // interface (NULLABLE)
 	Validators      []Validator // list of validators
 	SourceParamName string      // source field to load from
-}
-
-type Struct struct {
-	Fields []Field
 }
 
 // name of the query param to load from
@@ -97,6 +106,23 @@ func (v MinValidator) Render(f Field) string {
 
 func (v MaxValidator) Render(f Field) string {
 	return ""
+}
+
+// stringer
+func (v PresenceValidator) String() string {
+	return fmt.Sprintf("Must be present")
+}
+
+func (v EnumValidator) String() string {
+	return fmt.Sprintf("Must be one of: %s", strings.Join(v.AcceptedValues, ","))
+}
+
+func (v MinValidator) String() string {
+	return fmt.Sprintf("Min=%d", v.Value)
+}
+
+func (v MaxValidator) String() string {
+	return fmt.Sprintf("Max=%d", v.Value)
 }
 
 // ---
@@ -158,28 +184,26 @@ func main() {
 	// fmt.Fprintln(out, `import "bytes"`)
 	// fmt.Fprintln(out) // empty line
 
-	for _, node := range nodeSet.Decls { // all declarations
-		// fmt.Println(node)
+	var routers = make(map[string][]ApiEntry)
+	var paramStructs = make(map[string]ParamsStruct) // e.g "CreateParams" -> [F1,F2,...,Fn], where 'F' = Field 'instance'
 
+	for _, node := range nodeSet.Decls { // all declarations
 		g, ok := node.(*ast.GenDecl)
 		if ok {
-			// fmt.Printf("SKIP %v is not *ast.GenDecl\n", f)
 			for _, spec := range g.Specs {
 				typeSpec, ok := spec.(*ast.TypeSpec)
 				if !ok {
-					// fmt.Printf("SKIP %T is not ast.TypeSpec\n", spec)
 					continue
 				}
 
-				currStruct, ok := typeSpec.Type.(*ast.StructType)
+				// we are looking for structure types
+				currentStruct, ok := typeSpec.Type.(*ast.StructType)
 				if !ok {
-					fmt.Printf("SKIP %T is not ast.StructType\n", currStruct)
 					continue
 				}
 
-				// fmt.Println("Struct parsing >", typeSpec.Name)
-				// fmt.Println(typeSpec.Type)
-				for _, field := range currStruct.Fields.List {
+				var fields []Field
+				for _, field := range currentStruct.Fields.List {
 					var fieldType, tagDescriptor string
 					switch field.Type.(type) {
 					case *ast.Ident:
@@ -191,56 +215,68 @@ func main() {
 						tagReflect := reflect.StructTag(field.Tag.Value)
 						tagDescriptor = tagReflect.Get(tagPrefix)
 					}
-					fl := parseField(field.Names[0].Name, fieldType, tagDescriptor)
-					fmt.Println(fl)
+					field := parseField(field.Names[0].Name, fieldType, tagDescriptor)
+					fields = append(fields, field)
 				}
+
+				paramsStruct := ParamsStruct{fields}
+				paramStructs[typeSpec.Name.Name] = paramsStruct
 			}
 
-			fmt.Println("---")
+			// fmt.Println("---")
 			continue // if GenDecl -> not a FuncDecl
 		}
 
 		// ---
+		// FUNCTION PARSING
 
 		f, ok := node.(*ast.FuncDecl)
 		if !ok {
-			// fmt.Printf("SKIP %v is not *ast.GenDecl\n", f)
 			continue
-		} else {
-			// fmt.Println(f)
-			if f.Doc == nil {
-				continue
-			}
+		}
 
-			// fmt.Println(f.Name, "/function params:")
-			for _, param := range f.Type.Params.List[1:] {
-				fmt.Println(param.Type)
-			}
+		if f.Doc == nil {
+			continue
+		}
 
-			for _, recv := range f.Recv.List {
-				// fmt.Printf("recv type : %T", recv.Type)
+		// fmt.Println(f.Name, "/function params:")
+		var params []ParamsStruct
+		for _, param := range f.Type.Params.List[1:] {
+			// we deliberately ignore the context param which comes first
+			argName := param.Type.(*ast.Ident).Name // Expr -> Ident
+			params = append(params, paramStructs[argName])
+		}
 
-				switch xv := recv.Type.(type) {
-				case *ast.StarExpr:
-					if _, ok := xv.X.(*ast.Ident); ok {
-						// fmt.Println("*", si.Name)
-					}
-				case *ast.Ident:
-					// not this time anyway
-					fmt.Println(xv.Name)
-				}
-			}
+		var routerName string
+		for _, recv := range f.Recv.List {
+			// fmt.Printf("recv type : %T", recv.Type)
 
-			for _, comment := range f.Doc.List {
-				if !strings.HasPrefix(comment.Text, "// apigen:api") {
-					continue // ignore
-				}
-
-				apiEntryDescriptor := parseApiEntry(comment.Text[14:])
-				fmt.Println(apiEntryDescriptor)
+			switch recvType := recv.Type.(type) {
+			case *ast.StarExpr:
+				routerName = "*" + recvType.X.(*ast.Ident).Name // compose the name
+			case *ast.Ident:
+				// not this time anyway, but for sake of compatibility
+				routerName = recvType.Name
 			}
 		}
 
-		fmt.Println("---")
+		// fmt.Println(routerName)
+
+		var apiEntryDescriptor ApiEntry
+		for _, comment := range f.Doc.List {
+			// the function signature comment line is expected in the very first 'Doc'
+			if !strings.HasPrefix(comment.Text, "// apigen:api") {
+				continue // ignore
+			}
+
+			apiEntryDescriptor = parseApiEntry(comment.Text[14:])
+		}
+
+		apiEntryDescriptor.Name = f.Name.Name
+		apiEntryDescriptor.Params = params
+		routers[routerName] = append(routers[routerName], apiEntryDescriptor)
+		// fmt.Println("---")
 	}
+
+	fmt.Println(routers)
 }
