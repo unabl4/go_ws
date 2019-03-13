@@ -102,7 +102,6 @@ func (v MaxValidator) Render(f Field) string {
 // ---
 
 func parseField(fieldName string, fieldType string, fieldTag string) Field {
-	var validators []Validator
 	tagKeys := strings.Split(fieldTag, ",")
 
 	f := Field{}
@@ -113,11 +112,12 @@ func parseField(fieldName string, fieldType string, fieldTag string) Field {
 		split := strings.Split(tagKey, "=")
 
 		if split[0] == "required" {
-			validators = append(validators, PresenceValidator{})
+			f.Validators = append(f.Validators, PresenceValidator{})
 		} else if split[0] == "enum" {
 			vals := strings.Split(split[1], "|")
-			validators = append(validators, EnumValidator{vals})
+			f.Validators = append(f.Validators, EnumValidator{vals})
 		} else if split[0] == "default" {
+			// set default value
 			if fieldType == "string" {
 				f.DefaultValue = split[1]
 			} else if fieldType == "int" {
@@ -129,14 +129,13 @@ func parseField(fieldName string, fieldType string, fieldTag string) Field {
 			f.SourceParamName = split[1]
 		} else if split[0] == "min" {
 			i, _ := strconv.Atoi(split[1]) // str -> int
-			validators = append(validators, MinValidator{i})
+			f.Validators = append(f.Validators, MinValidator{i})
 		} else if split[0] == "max" {
 			i, _ := strconv.Atoi(split[1]) // str -> int
-			validators = append(validators, MaxValidator{i})
+			f.Validators = append(f.Validators, MaxValidator{i})
 		}
 	}
 
-	f.Validators = validators
 	return f
 }
 
