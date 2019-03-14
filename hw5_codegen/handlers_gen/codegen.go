@@ -409,7 +409,12 @@ func main() {
 		fmt.Println("\tswitch r.URL.Path {")
 		for _, e := range v {
 			fmt.Printf("\tcase \"%s\":\n", e.Path)
-			fmt.Printf("\t\t%s.%s(w, r)\n", muxPrefix, e.handlerFuncName())
+			fmt.Printf("\t\tf := %s.%s\n", muxPrefix, e.handlerFuncName())
+			fmt.Printf("\t\tf = requestMethodMiddleWare(f, \"%s\")\n", e.Method)
+			if e.Auth { // optional part
+				fmt.Println("\t\tf = authenticatedMiddleWare(f)")
+			}
+			fmt.Println("\t\tf(w, r)")
 		}
 
 		fmt.Println("\tdefault:\n\t\thttp.NotFound(w, r)") // default case
@@ -435,7 +440,64 @@ func main() {
 
 	// ---
 
+	fmt.Println(authenticatedMiddleware())
+	fmt.Println(requestMethodMiddleware())
+} // end of main func
+
+// middleware functions
+func authenticatedMiddleware() string {
+	return `func authenticatedMiddleWare(h http.HandlerFunc) http.HandlerFunc {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authToken := r.Header.Get("X-Auth")
+			if authToken != "100500" {
+				// no authentication found
+				ar := apiResponse{"unauthorized", nil} // blank error to be present inside
+	
+				j, err := encodeJson(ar)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+					return
+				}
+	
+				w.WriteHeader(http.StatusForbidden) // 403
+				w.Write(j)
+	
+				return // stop execution
+			}
+	
+			// next
+			h(w, r)
+		})
+	}`
 }
+
+func requestMethodMiddleware() string {
+	return `func requestMethodMiddleWare(h http.HandlerFunc, expectedReqMethod string) http.HandlerFunc {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != expectedReqMethod {
+				// no authentication found
+				ar := apiResponse{"bad method", nil} // blank error to be present inside
+	
+				j, err := encodeJson(ar)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+					return
+				}
+	
+				w.WriteHeader(http.StatusNotAcceptable) // 406
+				w.Write(j)
+	
+				return // stop execution
+			}
+	
+			// next
+			h(w, r)
+		})
+	}
+	`
+}
+
+// end of middleware functions
 
 // helper function to indent multiple (primarily) texts
 func Indent(input string, indenter string) string {
