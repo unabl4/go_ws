@@ -20,7 +20,7 @@ var (
 )
 
 type ApiEndpoint struct {
-	Path   string // url path
+	Path   string `json:"url"` // url path
 	Auth   bool
 	Method string
 
@@ -369,6 +369,18 @@ func main() {
 				fmt.Println("\tw.Write(j)")
 				fmt.Println("}")
 			}
+		} // end of handler funcs
+
+		// generate the main mux 'ServerHTTP' functions
+		fmt.Printf("func (%s %s) ServeHTTP(w http.ResponseWriter, r *http.Request) {\n", muxPrefix, k)
+		fmt.Println("\tswitch r.URL.Path {")
+		for _, e := range v {
+			fmt.Printf("\tcase \"%s\":\n", e.Path)
+			fmt.Printf("\t\t%s.%s(w, r)\n", muxPrefix, e.handlerFuncName())
 		}
+
+		fmt.Println("\tdefault:\n\t\thttp.NotFound(w, r)") // default case
+		fmt.Println("\t}")
+		fmt.Println("}")
 	}
 }
