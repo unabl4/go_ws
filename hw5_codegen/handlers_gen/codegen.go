@@ -126,11 +126,25 @@ func (v EnumValidator) Render(f Field) string {
 }
 
 func (v MinValidator) Render(f Field) string {
-	return ""
+	if f.Type == "string" {
+		return fmt.Sprintf("if len(%s.%s) < %d {\n\treturn fmt.Errorf(\"%s must be >= %d\")\n}", muxPrefix, f.Name, v.Value, f.srcQueryParam(), v.Value)
+	} else if f.Type == "int" {
+		return fmt.Sprintf("if %s.%s < %d {\n\treturn fmt.Errorf(\"%s must be >= %d\")\n}", muxPrefix, f.Name, v.Value, f.srcQueryParam(), v.Value)
+	} else {
+		// should NOT happen
+		panic("unsupported type")
+	}
 }
 
 func (v MaxValidator) Render(f Field) string {
-	return ""
+	if f.Type == "string" {
+		return fmt.Sprintf("if len(%s.%s) > %d {\n\treturn fmt.Errorf(\"%s must be <= %d\")\n}", muxPrefix, f.Name, v.Value, f.srcQueryParam(), v.Value)
+	} else if f.Type == "int" {
+		return fmt.Sprintf("if %s.%s > %d {\n\treturn fmt.Errorf(\"%s must be <= %d\")\n}", muxPrefix, f.Name, v.Value, f.srcQueryParam(), v.Value)
+	} else {
+		// should NOT happen
+		panic("unsupported type")
+	}
 }
 
 // stringer
