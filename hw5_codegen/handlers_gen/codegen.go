@@ -14,37 +14,43 @@ import (
 )
 
 var (
-	paramsPrefix = "srv"           // something we agree on (does not really matter as long as it is consistent)
-	tagPrefix    = "`apivalidator" // has to be with the tick
+	muxPrefix    = "srv"
+	paramsPrefix = "params"        // something we agree on (does not really matter as long as it is consistent)
+	tagPrefix    = "`apivalidator" // has to be with the 'tick'
 )
 
-type ApiEntry struct {
-	Url    string
+type ApiEndpoint struct {
+	Path   string // url path
 	Auth   bool
 	Method string
 
 	Router // routing description
 }
 
+func (e ApiEndpoint) handlerFuncName() string {
+	return "handler" + e.Name // Router.Name
+}
+
 // ---
 
-func parseApiEntry(apiEntryDescriptor string) ApiEntry {
-	ae := ApiEntry{}
-	ae.Method = "GET" // default method value
-	json.Unmarshal([]byte(apiEntryDescriptor), &ae)
-	return ae
+func parseApiEndpoint(apiEndpointDescriptor string) ApiEndpoint {
+	e := ApiEndpoint{}
+	e.Method = "GET" // default method value
+	json.Unmarshal([]byte(apiEndpointDescriptor), &e)
+	return e
 }
 
 // ---
 
 type Router struct { // mux
-	Name   string         // raw name
-	Params []ParamsStruct // one or more
+	Name   string   // raw name
+	Params []Params // one or more
 }
 
 // ---
 
-type ParamsStruct struct {
+type Params struct {
+	Name   string // name of the struct type (?)
 	Fields []Field
 }
 
@@ -87,9 +93,9 @@ type EnumValidator struct {
 
 func (v PresenceValidator) Render(f Field) string {
 	if f.Type == "string" {
-		return fmt.Sprintf("if len(%s.%s) <= 0 {\n\treturn fmt.Errorf(\"%s must me not empty\")\n}", paramsPrefix, f.Name, f.srcQueryParam())
+		return fmt.Sprintf("if len(%s.%s) <= 0 {\n\treturn fmt.Errorf(\"%s must me not empty\")\n}", muxPrefix, f.Name, f.srcQueryParam())
 	} else if f.Type == "int" {
-		return fmt.Sprintf("if %s.%s == 0 {\n\treturn fmt.Errorf(\"%s must me not empty\")\n}", paramsPrefix, f.Name, f.srcQueryParam())
+		return fmt.Sprintf("if %s.%s == 0 {\n\treturn fmt.Errorf(\"%s must me not empty\")\n}", muxPrefix, f.Name, f.srcQueryParam())
 	} else {
 		// should NOT happen
 		panic("unsupported type")
@@ -184,8 +190,8 @@ func main() {
 	// fmt.Fprintln(out, `import "bytes"`)
 	// fmt.Fprintln(out) // empty line
 
-	var routers = make(map[string][]ApiEntry)
-	var paramStructs = make(map[string]ParamsStruct) // e.g "CreateParams" -> [F1,F2,...,Fn], where 'F' = Field 'instance'
+	var routers = make(map[string][]ApiEndpoint)
+	var paramStructs = make(map[string]Params) // e.g "CreateParams" -> [F1,F2,...,Fn], where 'F' = Field 'instance'
 
 	for _, node := range nodeSet.Decls { // all declarations
 		g, ok := node.(*ast.GenDecl)
@@ -201,6 +207,8 @@ func main() {
 				if !ok {
 					continue
 				}
+
+				structName := typeSpec.Name.Name // params struct name
 
 				var fields []Field
 				for _, field := range currentStruct.Fields.List {
@@ -219,16 +227,15 @@ func main() {
 					fields = append(fields, field)
 				}
 
-				paramsStruct := ParamsStruct{fields}
-				paramStructs[typeSpec.Name.Name] = paramsStruct
+				params := Params{structName, fields}
+				paramStructs[structName] = params
 			}
 
-			// fmt.Println("---")
-			continue // if GenDecl -> not a FuncDecl
+			continue // if GenDecl -> not a FuncDecl (not really necessary)
 		}
 
 		// ---
-		// FUNCTION PARSING
+		// FUNCTION (ENDPOINTS) PARSING
 
 		f, ok := node.(*ast.FuncDecl)
 		if !ok {
@@ -236,11 +243,10 @@ func main() {
 		}
 
 		if f.Doc == nil {
-			continue
+			continue // there must be a comment
 		}
 
-		// fmt.Println(f.Name, "/function params:")
-		var params []ParamsStruct
+		var params []Params
 		for _, param := range f.Type.Params.List[1:] {
 			// we deliberately ignore the context param which comes first
 			argName := param.Type.(*ast.Ident).Name // Expr -> Ident
@@ -262,34 +268,32 @@ func main() {
 
 		// fmt.Println(routerName)
 
-		var apiEntryDescriptor ApiEntry
+		var apiEndpoint ApiEndpoint
 		for _, comment := range f.Doc.List {
 			// the function signature comment line is expected in the very first 'Doc'
 			if !strings.HasPrefix(comment.Text, "// apigen:api") {
 				continue // ignore
 			}
 
-			apiEntryDescriptor = parseApiEntry(comment.Text[14:])
+			apiEndpoint = parseApiEndpoint(comment.Text[14:])
 		}
 
-		apiEntryDescriptor.Name = f.Name.Name
-		apiEntryDescriptor.Params = params
-		routers[routerName] = append(routers[routerName], apiEntryDescriptor)
-		// fmt.Println("---")
+		apiEndpoint.Name = f.Name.Name
+		apiEndpoint.Params = params
+		routers[routerName] = append(routers[routerName], apiEndpoint)
 	}
 
 	// END OF PARSING
 	// THE ACTUAL CODE GENERATION STEP
 
 	for k, v := range routers {
-		// Multiplexor (mux)
+		// multiplexor (mux)
 		// fmt.Println("K=", k,v)
 		for _, e := range v {
-			// Individual API endpoints
-			handlerFuncName := "handler" + e.Name
-			paramsName := v[0].Name + "Params" // ?
+			// mux api endpoints
+			paramsName := e.Params[0].Name // ?
 
-			fmt.Printf("func (%s %s) %s(w http.ResponseWriter, r *http.Request) {\n", paramsPrefix, k, handlerFuncName)
+			fmt.Printf("func (%s %s) %s(w http.ResponseWriter, r *http.Request) {\n", muxPrefix, k, e.handlerFuncName())
 			fmt.Println("\tctx := r.Context()") // context is always present as the first argument
 			fmt.Println("\tquery := r.URL.Query()")
 			fmt.Println() // newline spacer
@@ -346,7 +350,7 @@ func main() {
 				fmt.Println("\t}")
 
 				fmt.Println()
-				fmt.Println("\tsrvResponse, err := srv.Create(ctx, params)")
+				fmt.Println("\tsrvResponse, err := srv.Create(ctx, params)") // ?
 				fmt.Println("\tvar ar apiResponse")
 				fmt.Println("\tif err != nil {")
 				fmt.Println("\t\te := err.(ApiError)")
