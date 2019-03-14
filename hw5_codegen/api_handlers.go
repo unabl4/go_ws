@@ -59,6 +59,7 @@ func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/user/create":
 		f := srv.handlerUserCreate
+		f = requestMethodMiddleWare(f, "POST")
 		f = authenticatedMiddleWare(f) // optional part
 		f(w, r)
 	default:
@@ -163,7 +164,30 @@ func authenticatedMiddleWare(h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 
-			w.WriteHeader(http.StatusUnauthorized) // 401
+			w.WriteHeader(http.StatusForbidden) // 403
+			w.Write(j)
+
+			return // stop execution
+		}
+
+		// next
+		h(w, r)
+	})
+}
+
+func requestMethodMiddleWare(h http.HandlerFunc, expectedReqMethod string) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != expectedReqMethod {
+			// no authentication found
+			ar := apiResponse{"bad method", nil} // blank error to be present inside
+
+			j, err := encodeJson(ar)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+				return
+			}
+
+			w.WriteHeader(http.StatusNotAcceptable) // 406
 			w.Write(j)
 
 			return // stop execution
