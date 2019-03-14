@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -103,7 +104,25 @@ func (v PresenceValidator) Render(f Field) string {
 }
 
 func (v EnumValidator) Render(f Field) string {
-	return ""
+	values := []string{}
+	for _, e := range v.AcceptedValues {
+		values = append(values, fmt.Sprintf("\"%s\"", e))
+	}
+
+	foundIndVar := strings.ToLower(f.Name) + "Found" // indicator variable name
+	acceptedValues := fmt.Sprintf("[]string{ %s }", strings.Join(values, ", "))
+	acceptedValuesError := "[" + strings.Join(v.AcceptedValues, ", ") + "]"
+	s := bytes.Buffer{}
+	fmt.Fprintf(&s, "%s := false\n", foundIndVar)
+	fmt.Fprintf(&s, "for _, v := range %s {\n", acceptedValues)
+	fmt.Fprintf(&s, "\tif v == %s.%s {\n\t\t%s = true\n\t\tbreak\n\t}\n", muxPrefix, f.Name, foundIndVar)
+	fmt.Fprintln(&s, "}")
+
+	fmt.Fprintf(&s, "if !%s {\n", foundIndVar)
+	fmt.Fprintf(&s, "\treturn fmt.Errorf(\"%s must be one of %s\")\n", f.srcQueryParam(), acceptedValuesError)
+	fmt.Fprintln(&s, "}")
+
+	return s.String()
 }
 
 func (v MinValidator) Render(f Field) string {
@@ -382,5 +401,30 @@ func main() {
 		fmt.Println("\tdefault:\n\t\thttp.NotFound(w, r)") // default case
 		fmt.Println("\t}")
 		fmt.Println("}")
+
+		// ---
+
+		for _, e := range v {
+			for _, p := range e.Params {
+				fmt.Printf("func (%s %s) Validate() error {\n", muxPrefix, p.Name)
+				for _, f := range p.Fields {
+					for _, v := range f.Validators {
+						fmt.Println(Indent(v.Render(f), "\t"))
+					}
+				}
+
+				fmt.Println("\treturn nil")
+				fmt.Println("}")
+			}
+		}
 	}
+
+	// ---
+
+}
+
+// helper function to indent multiple (primarily) texts
+func Indent(input string, indenter string) string {
+	s := strings.Replace(input, "\n", "\n"+indenter, -1)
+	return indenter + s
 }
