@@ -58,7 +58,9 @@ func throwBadRequest(w http.ResponseWriter, errorMessage string) {
 func (srv *MyApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/user/create":
-		srv.handlerUserCreate(w, r)
+		f := srv.handlerUserCreate
+		f = authenticatedMiddleWare(f) // optional part
+		f(w, r)
 	default:
 		// 404
 		http.NotFound(w, r)
@@ -143,4 +145,31 @@ func (cp CreateParams) Validate() error {
 	// ... (to be continued)
 
 	return nil // all valid
+}
+
+// ---
+// middlewares
+
+func authenticatedMiddleWare(h http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authToken := r.Header.Get("X-Auth")
+		if authToken != "100500" {
+			// no authentication found
+			ar := apiResponse{"unauthorized", nil} // blank error to be present inside
+
+			j, err := encodeJson(ar)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+				return
+			}
+
+			w.WriteHeader(http.StatusUnauthorized) // 401
+			w.Write(j)
+
+			return // stop execution
+		}
+
+		// next
+		h(w, r)
+	})
 }
