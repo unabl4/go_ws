@@ -440,64 +440,104 @@ func main() {
 
 	// ---
 
+	// print headers
+	fmt.Println("type apiResponse struct {")
+	fmt.Println("\tError    string      `json:\"error\"`")
+	fmt.Println("\tResponse interface{} `json:\"response,omitempty\"`")
+	fmt.Println("}")
+	fmt.Println()
+
+	fmt.Println(jsonFacilties()) // json
+
+	// add middlewares
 	fmt.Println(authenticatedMiddleware())
 	fmt.Println(requestMethodMiddleware())
 } // end of main func
 
+// ---
+
 // middleware functions
 func authenticatedMiddleware() string {
 	return `func authenticatedMiddleWare(h http.HandlerFunc) http.HandlerFunc {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authToken := r.Header.Get("X-Auth")
-			if authToken != "100500" {
-				// no authentication found
-				ar := apiResponse{"unauthorized", nil} // blank error to be present inside
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authToken := r.Header.Get("X-Auth")
+		if authToken != "100500" {
+			// no authentication found
+			ar := apiResponse{"unauthorized", nil} // blank error to be present inside
 	
-				j, err := encodeJson(ar)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
-					return
-				}
-	
-				w.WriteHeader(http.StatusForbidden) // 403
-				w.Write(j)
-	
-				return // stop execution
+			j, err := encodeJson(ar)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+				return
 			}
 	
-			// next
-			h(w, r)
-		})
-	}`
+			w.WriteHeader(http.StatusForbidden) // 403
+			w.Write(j)
+	
+			return // stop execution
+		}
+	
+		// next
+		h(w, r)
+	})
+}`
 }
 
 func requestMethodMiddleware() string {
 	return `func requestMethodMiddleWare(h http.HandlerFunc, expectedReqMethod string) http.HandlerFunc {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != expectedReqMethod {
-				// no authentication found
-				ar := apiResponse{"bad method", nil} // blank error to be present inside
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != expectedReqMethod {
+			// no authentication found
+			ar := apiResponse{"bad method", nil} // blank error to be present inside
 	
-				j, err := encodeJson(ar)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
-					return
-				}
-	
-				w.WriteHeader(http.StatusNotAcceptable) // 406
-				w.Write(j)
-	
-				return // stop execution
+			j, err := encodeJson(ar)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+				return
 			}
 	
-			// next
-			h(w, r)
-		})
-	}
-	`
+			w.WriteHeader(http.StatusNotAcceptable) // 406
+			w.Write(j)
+	
+			return // stop execution
+		}
+	
+		// next
+		h(w, r)
+	})
+}`
 }
 
 // end of middleware functions
+
+func jsonFacilties() string {
+	return `func encodeJson(content interface{}) ([]byte, error) {
+	b := &bytes.Buffer{}
+	c := json.NewEncoder(b) // new json encoder
+	c.SetEscapeHTML(false)
+	err := c.Encode(content) // -> json
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	return b.Bytes(), nil
+}
+	
+func throwBadRequest(w http.ResponseWriter, errorMessage string) {
+	w.WriteHeader(http.StatusBadRequest) // 400 (bad request)
+	
+	ar := apiResponse{errorMessage, nil}
+	j, err := encodeJson(ar)
+	
+	if err != nil { // json encoding error
+		http.Error(w, err.Error(), http.StatusInternalServerError) // json serialization error
+		return
+	}
+	
+	w.Write(j) // flush
+}`
+}
 
 // helper function to indent multiple (primarily) texts
 func Indent(input string, indenter string) string {
