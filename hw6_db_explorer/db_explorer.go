@@ -39,6 +39,7 @@ func (h *Handler) Initialize() error {
 		return err
 	}
 	 
+	defer h.DB.Close()
 	for q.Next() {	// loop through rows
 		err := q.Scan(&n)
 		if err != nil {
