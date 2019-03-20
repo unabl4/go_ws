@@ -2,7 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -56,6 +56,15 @@ func (h *Handler) Initialize() error {
 
 // ---
 
+// api response structure
+type Response struct {
+	Error    string      `json:"error,omitempty"`
+	Response interface{} `json:"response,omitempty"`
+	// Records string
+}
+
+// ---
+
 type DbRequest struct {
 	TableName string // for what table
 	// optional params
@@ -95,7 +104,35 @@ func parseDbRequest(r *http.Request) DbRequest {
 	return d
 }
 
+// ---
+
+func (h *Handler) handleListOfTables(w http.ResponseWriter, r *http.Request) {
+	// TODO: Check if the HTTP method is 'GET'
+
+	tables := []string{}
+
+	// collect table names
+	for _, table := range h.Tables {
+		tables = append(tables, table.Name)
+	}
+
+	t := map[string]interface{}{"tables": tables} // intermediate view
+	c := Response{"", t}                          // no error
+	j, err := json.Marshal(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+	w.Write(j)
+}
+
+// ---
+
 // primary router
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Println(h)
+	if r.URL.Path == "/" {
+		h.handleListOfTables(w, r)
+		return
+	} else {
+		// custom logic inside
+	}
 }
