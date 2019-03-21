@@ -11,7 +11,7 @@ import (
 type Handler struct {
 	DB *sql.DB
 	// ---
-	Tables []Table
+	Tables map[string]Table // []Tables
 }
 
 type Table struct {
@@ -35,6 +35,7 @@ type Field struct {
 func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 	h := Handler{} // new instance
 	h.DB = db
+	h.Tables = make(map[string]Table) // required
 	err := h.Initialize()
 	if err != nil {
 		return nil, err
@@ -114,7 +115,7 @@ func (h *Handler) Initialize() error {
 		}
 
 		t := Table{n, fields}
-		h.Tables = append(h.Tables, t)
+		h.Tables[n] = t
 	}
 
 	return nil // no errors
@@ -195,18 +196,9 @@ func (h *Handler) handleListOfTables(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) {
-	found := false
-
-	// check table existence
-	for _, t := range h.Tables {
-		if t.Name == q.TableName {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		// table not found
+	t, ok := h.Tables[q.TableName] // check the table
+	if !ok {
+		// table not found -> 404
 		c := Response{"unknown table", nil}
 		j, err := json.Marshal(c)
 		if err != nil {
@@ -216,6 +208,18 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 		w.WriteHeader(http.StatusNotFound) // and not '200'
 		w.Write(j)                         // the content
 		return
+	}
+
+	// ---
+
+	if q.RecordId != nil {
+		// lookup for a particular record
+		// ignore limit and offset (I guess)
+
+	} else {
+		// show table records
+		// (SELECT * FROM) -> json (<- map)
+		fmt.Println(t)
 	}
 }
 
