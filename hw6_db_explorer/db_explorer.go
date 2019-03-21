@@ -3,7 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	_ "fmt"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -15,7 +15,17 @@ type Handler struct {
 }
 
 type Table struct {
+	Name   string
+	Fields []Field
+}
+
+type Field struct {
 	Name string
+	Type string
+	// ---
+	IsPrimary       bool
+	IsAutoIncrement bool
+	IsNullable      bool
 }
 
 // ===
@@ -34,6 +44,56 @@ func NewDbExplorer(db *sql.DB) (http.Handler, error) {
 
 // ===
 
+func getTableFields(db *sql.DB, tableName string) ([]Field, error) {
+	// sql -> go type converter routine
+	t := func(i string) string {
+		if strings.HasPrefix(i, "int") {
+			return "int"
+		} else if strings.HasPrefix(i, "varchar") || i == "text" {
+			return "string"
+		} else {
+			panic("unsupported field type")
+		}
+	} // end of t
+
+	r, err := db.Query(fmt.Sprintf("SHOW FULL COLUMNS FROM %s", tableName)) // placeholder
+	if err != nil {
+		return nil, err
+	}
+
+	defer r.Close() // close the statement
+
+	var fields []Field
+	var w interface{}                                            // waste var (= value ignore)
+	var fieldType, isNullable, isPrimary, isAutoIncrement string // aux
+	for r.Next() {
+		f := Field{}
+		err := r.Scan(&f.Name, &fieldType, &w, &isNullable, &isPrimary, &w, &isAutoIncrement, &w, &w)
+		if err != nil {
+			return nil, err
+		}
+
+		f.Type = t(fieldType)
+
+		if isNullable == "YES" {
+			f.IsNullable = true
+		}
+
+		// primary key is ignored during the insertion and CANNOT be updated
+		if isPrimary == "PRI" {
+			f.IsPrimary = true
+		}
+
+		if isAutoIncrement == "auto_increment" {
+			f.IsAutoIncrement = true
+		}
+
+		fields = append(fields, f)
+	}
+
+	return fields, nil
+}
+
 func (h *Handler) Initialize() error {
 	var n string                        // table name
 	q, err := h.DB.Query("SHOW TABLES") // and not 'QueryRow'
@@ -41,14 +101,19 @@ func (h *Handler) Initialize() error {
 		return err
 	}
 
-	defer h.DB.Close()
-	for q.Next() { // loop through rows
+	defer q.Close() // close the statement
+	for q.Next() {  // loop through rows
 		err := q.Scan(&n)
 		if err != nil {
 			return err
 		}
 
-		t := Table{n}
+		fields, err := getTableFields(h.DB, n) // ?
+		if err != nil {
+			return err
+		}
+
+		t := Table{n, fields}
 		h.Tables = append(h.Tables, t)
 	}
 
