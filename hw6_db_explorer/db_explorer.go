@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	_ "fmt"
 	"net/http"
 	"strings"
 )
@@ -65,7 +66,8 @@ type Response struct {
 
 // ---
 
-type DbRequest struct {
+type DbQuery struct {
+	Method    string
 	TableName string // for what table
 	// optional params
 	RecordId *string // particular record we are after
@@ -74,10 +76,10 @@ type DbRequest struct {
 }
 
 // extract necessary params from the request url (table name, record id) path and query (limit, offset)
-func parseDbRequest(r *http.Request) DbRequest {
+func parseDbQuery(r *http.Request) DbQuery {
 	p := strings.Split(r.URL.Path, "/") // path components
 	q := r.URL.Query()                  // query components
-	d := DbRequest{}
+	d := DbQuery{}
 	var t []string
 	for _, h := range p { // filter out empty parts
 		if h != "" {
@@ -101,6 +103,8 @@ func parseDbRequest(r *http.Request) DbRequest {
 		d.Limit = &limit[0]
 	}
 
+	// TODO: Validation? (GET, POST, PUT, DELETE)
+	d.Method = r.Method
 	return d
 }
 
@@ -125,14 +129,68 @@ func (h *Handler) handleListOfTables(w http.ResponseWriter, r *http.Request) {
 	w.Write(j)
 }
 
+func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) {
+	found := false
+
+	// check table existence
+	for _, t := range h.Tables {
+		if t.Name == q.TableName {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		// table not found
+		c := Response{"unknown table", nil}
+		j, err := json.Marshal(c)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		w.WriteHeader(http.StatusNotFound) // and not '200'
+		w.Write(j)                         // the content
+		return
+	}
+}
+
 // ---
+
+/*
+* GET / - возвращает список все таблиц (которые мы можем использовать в дальнейших запросах)
+* GET /$table?limit=5&offset=7 - возвращает список из 5 записей (limit) начиная с 7-й (offset) из таблицы $table. limit по-умолчанию 5, offset 0
+* GET /$table/$id - возвращает информацию о самой записи или 404
+* PUT /$table - создаёт новую запись, данный по записи в теле запроса (POST-параметры)
+* POST /$table/$id - обновляет запись, данные приходят в теле запроса (POST-параметры)
+* DELETE /$table/$id - удаляет запись */
 
 // primary router
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" {
+
+	// 500
+	defer func() {
+		if err := recover(); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}()
+
+	// ---
+	// special case
+	if r.URL.Path == "/" && r.Method == "GET" {
 		h.handleListOfTables(w, r)
-		return
-	} else {
-		// custom logic inside
+		return // stop
+	}
+
+	// the remaining part
+	q := parseDbQuery(r)
+
+	switch r.Method {
+	case "GET":
+		h.handleShow(w, r, q)
+	// case "POST": _
+	// case "PUT": _
+	// case "DELETE":
+	default:
+		http.Error(w, "bad request", http.StatusBadRequest) // ?
 	}
 }
