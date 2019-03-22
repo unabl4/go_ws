@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 )
+
+const MAX_LIMIT = int(1e3) // huge number
 
 type Handler struct {
 	DB *sql.DB
@@ -137,8 +140,9 @@ type DbQuery struct {
 	TableName string // for what table
 	// optional params
 	RecordId *string // particular record we are after
-	Limit    *string
-	Offset   *string
+
+	Offset int // defaults to zero
+	Limit  int
 }
 
 // extract necessary params from the request url (table name, record id) path and query (limit, offset)
@@ -162,11 +166,21 @@ func parseDbQuery(r *http.Request) DbQuery {
 	}
 
 	if offset, ok := q["offset"]; ok {
-		d.Offset = &offset[0]
+		offsetInt, err := strconv.Atoi(offset[0])
+		if err == nil { // string -> int conversion failed
+			d.Offset = offsetInt // otherwise defaults to zero
+		}
+
+		// if the offset is set -> the limit MUST be set automatically
+		d.Limit = MAX_LIMIT
 	}
 
 	if limit, ok := q["limit"]; ok {
-		d.Limit = &limit[0]
+		limitInt, err := strconv.Atoi(limit[0])
+		if err != nil { // string -> int conversion failed
+			limitInt = MAX_LIMIT
+		}
+		d.Limit = limitInt
 	}
 
 	// TODO: Validation? (GET, POST, PUT, DELETE)
@@ -186,7 +200,7 @@ func (h *Handler) handleListOfTables(w http.ResponseWriter, r *http.Request) {
 		tables = append(tables, table.Name)
 	}
 
-	t := map[string]interface{}{"tables": tables} // intermediate view
+	t := map[string]interface{}{"tables": tables} // eintermediate view
 	c := Response{"", t}                          // no error
 	j, err := json.Marshal(c)
 	if err != nil {
@@ -219,7 +233,30 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 	} else {
 		// show table records
 		// (SELECT * FROM) -> json (<- map)
-		fmt.Println(t)
+		// IDEA: pass map refs vector into Scan?
+
+		// var g []map[string]interface{}
+
+		// m := make(map[string]interface{})
+		// v :=
+
+		placeholderVals := []interface{}{}
+		queryStr := fmt.Sprintf("SELECT * FROM %s", t.Name) // placeholder cannot be used for table or column names (google)
+
+		if q.Offset != 0 || q.Limit != 0 {
+			queryStr += " LIMIT ?,?" // <offset, limit>
+			placeholderVals = append(placeholderVals, q.Offset, q.Limit)
+		}
+
+		rows, err := h.DB.Query(queryStr, placeholderVals...)
+		if err != nil {
+			panic(err) // shortcut to 500 (recovery)
+		}
+
+		defer rows.Close() // close statement
+		for rows.Next() {
+			fmt.Println(rows)
+		}
 	}
 }
 
