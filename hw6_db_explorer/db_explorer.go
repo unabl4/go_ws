@@ -226,13 +226,67 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 
 	// ---
 
-	var jsonOut []byte // json output
-	var jsonErr error
+	var endJson interface{} // map
 
 	if q.RecordId != nil {
 		// lookup for a particular record
 		// ignore limit and offset (I guess)
 
+		var primaryKey string
+		for _, f := range t.Fields {
+			if f.IsPrimary {
+				primaryKey = f.Name
+				break // found
+			}
+		}
+
+		if primaryKey == "" {
+			panic("Primary key not found")
+		}
+
+		queryStr := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", t.Name, primaryKey)
+		row := h.DB.QueryRow(queryStr, q.RecordId)
+
+		columns := make([]interface{}, len(t.Fields))
+		columnPointers := make([]interface{}, len(columns)) // required
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		err := row.Scan(columnPointers...)
+		if err != nil {
+			// there's an error
+			if err == sql.ErrNoRows {
+				// special case -> no rows (records)
+
+				c := Response{"record not found", nil}
+				j, err := json.Marshal(c)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+
+				w.WriteHeader(http.StatusNotFound) // and not '200'
+				w.Write(j)                         // the content
+				return
+			} else {
+				panic("unknown error occured") // shortcut to 00
+			}
+		}
+
+		// record map composition
+		record := make(map[string]interface{}) // new record
+		for i, col := range t.Fields {
+			colName := strings.ToLower(col.Name)
+			value := columns[i]              // get the 'column' value
+			bytes, ok := columns[i].([]byte) // important step, otherwise looks like base64 encoded (acts so as well)
+			if ok {
+				value = string(bytes)
+			}
+
+			record[colName] = value
+		}
+
+		endJson = map[string]interface{}{"record": record} // wrap
 	} else {
 		// show table records
 		// (SELECT * FROM) -> json (<- map)
@@ -278,21 +332,23 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 				record[colName] = value
 			}
 
-			fmt.Println(record)
 			g = append(g, record)
 		}
 
-		endJson := map[string]interface{}{"records": g} // wrap
-		jsonOut, jsonErr = json.Marshal(endJson)
+		endJson = map[string]interface{}{"records": g} // wrap
 	} // end of if
 
-	if jsonErr != nil {
-		http.Error(w, jsonErr.Error(), http.StatusInternalServerError)
+	// ---
+
+	c := Response{"", endJson} // wrap in 'response'
+	j, err := json.Marshal(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return // ?
 	}
 
 	// 200,OK
-	w.Write(jsonOut) // the content
+	w.Write(j) // the content
 }
 
 // ---
