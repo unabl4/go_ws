@@ -226,6 +226,9 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 
 	// ---
 
+	var jsonOut []byte // json output
+	var jsonErr error
+
 	if q.RecordId != nil {
 		// lookup for a particular record
 		// ignore limit and offset (I guess)
@@ -248,6 +251,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 			panic(err) // shortcut to 500 (recovery)
 		}
 
+		var g []map[string]interface{}
 		defer rows.Close() // close statement
 		for rows.Next() {
 			columns := make([]interface{}, len(t.Fields))
@@ -275,9 +279,20 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 			}
 
 			fmt.Println(record)
-			// g = append(g, record)
+			g = append(g, record)
 		}
+
+		endJson := map[string]interface{}{"records": g} // wrap
+		jsonOut, jsonErr = json.Marshal(endJson)
+	} // end of if
+
+	if jsonErr != nil {
+		http.Error(w, jsonErr.Error(), http.StatusInternalServerError)
+		return // ?
 	}
+
+	// 200,OK
+	w.Write(jsonOut) // the content
 }
 
 // ---
