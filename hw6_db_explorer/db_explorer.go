@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -200,7 +201,8 @@ func (h *Handler) handleListOfTables(w http.ResponseWriter, r *http.Request) {
 		tables = append(tables, table.Name)
 	}
 
-	t := map[string]interface{}{"tables": tables} // eintermediate view
+	sort.Strings(tables)
+	t := map[string]interface{}{"tables": tables } // intermediate view
 	c := Response{"", t}                          // no error
 	j, err := json.Marshal(c)
 	if err != nil {
@@ -324,9 +326,19 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 			for i, col := range t.Fields {
 				colName := strings.ToLower(col.Name)
 				value := columns[i]              // get the 'column' value
+				
 				bytes, ok := columns[i].([]byte) // important step, otherwise looks like base64 encoded (acts so as well)
 				if ok {
-					value = string(bytes)
+					strValue := string(bytes)
+					if col.Type == "int" {	// special int case
+						intValue, err := strconv.Atoi(strValue)
+						if err != nil {
+							panic("string -> int conversion error")
+						}
+						value = intValue
+					} else {
+						value = strValue
+					}
 				}
 
 				record[colName] = value
@@ -349,6 +361,16 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 
 	// 200,OK
 	w.Write(j) // the content
+}	// end of handle show
+
+// PUT -> add (incorrect, but still)
+func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
+	// cases:
+	// 1) insertion into a non-existing table
+	// 2) insertion with incorrect args
+	// 3) invalid field TYPE value (from tests)
+
+	
 }
 
 // ---
@@ -367,6 +389,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 500
 	defer func() {
 		if err := recover(); err != nil {
+			fmt.Println(err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}()
@@ -385,7 +408,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		h.handleShow(w, r, q)
 	// case "POST": _
-	// case "PUT": _
+	case "PUT": 
+		h.handleAdd(w, r, q)
 	// case "DELETE":
 	default:
 		http.Error(w, "bad request", http.StatusBadRequest) // ?
