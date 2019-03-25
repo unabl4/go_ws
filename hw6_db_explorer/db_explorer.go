@@ -235,11 +235,6 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 		// (SELECT * FROM) -> json (<- map)
 		// IDEA: pass map refs vector into Scan?
 
-		// var g []map[string]interface{}
-
-		// m := make(map[string]interface{})
-		// v :=
-
 		placeholderVals := []interface{}{}
 		queryStr := fmt.Sprintf("SELECT * FROM %s", t.Name) // placeholder cannot be used for table or column names (google)
 
@@ -255,7 +250,32 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 
 		defer rows.Close() // close statement
 		for rows.Next() {
-			fmt.Println(rows)
+			columns := make([]interface{}, len(t.Fields))
+			columnPointers := make([]interface{}, len(columns)) // required
+			for i := range columns {
+				columnPointers[i] = &columns[i]
+			}
+
+			err := rows.Scan(columnPointers...)
+			if err != nil {
+				panic(err) // shortcut to 500
+			}
+
+			// record map composition
+			record := make(map[string]interface{}) // new record
+			for i, col := range t.Fields {
+				colName := strings.ToLower(col.Name)
+				value := columns[i]              // get the 'column' value
+				bytes, ok := columns[i].([]byte) // important step, otherwise looks like base64 encoded (acts so as well)
+				if ok {
+					value = string(bytes)
+				}
+
+				record[colName] = value
+			}
+
+			fmt.Println(record)
+			// g = append(g, record)
 		}
 	}
 }
