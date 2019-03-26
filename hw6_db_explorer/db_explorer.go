@@ -402,6 +402,9 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 	json.Unmarshal(jsonBody, &body) // check for errors
 
 	// ---
+	placeholders := []string{}
+	placeholderVals := []interface{}{}
+	fieldNames := []string{}
 
 	for _, f := range t.Fields {
 		k := strings.ToLower(f.Name) // key
@@ -428,9 +431,25 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 			invalidField(k, w, r)
 			return
 		}
+
+		fieldNames = append(fieldNames, f.Name)
+		placeholders = append(placeholders, "?")
+		placeholderVals = append(placeholderVals, fieldValue)
 	}
 
-	fmt.Println(q)
+	queryStr := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", t.Name, strings.Join(fieldNames, ","), strings.Join(placeholders, ","))
+	result, err := h.DB.Exec(queryStr, placeholderVals...)
+
+	id, err := result.LastInsertId()
+	response := map[string]interface{}{"id": id} // the main ID response
+	c := Response{"", response}
+	j, err := json.Marshal(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return // ?
+	}
+
+	w.Write(j)
 }
 
 // ---
