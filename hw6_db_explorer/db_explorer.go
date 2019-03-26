@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"sort"
 	"strconv"
@@ -202,7 +203,7 @@ func (h *Handler) handleListOfTables(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sort.Strings(tables)
-	t := map[string]interface{}{"tables": tables } // intermediate view
+	t := map[string]interface{}{"tables": tables} // intermediate view
 	c := Response{"", t}                          // no error
 	j, err := json.Marshal(c)
 	if err != nil {
@@ -325,12 +326,12 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 			record := make(map[string]interface{}) // new record
 			for i, col := range t.Fields {
 				colName := strings.ToLower(col.Name)
-				value := columns[i]              // get the 'column' value
-				
+				value := columns[i] // get the 'column' value
+
 				bytes, ok := columns[i].([]byte) // important step, otherwise looks like base64 encoded (acts so as well)
 				if ok {
 					strValue := string(bytes)
-					if col.Type == "int" {	// special int case
+					if col.Type == "int" { // special int case
 						intValue, err := strconv.Atoi(strValue)
 						if err != nil {
 							panic("string -> int conversion error")
@@ -361,7 +362,21 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request, q DbQuery) 
 
 	// 200,OK
 	w.Write(j) // the content
-}	// end of handle show
+} // end of handle show
+
+// routine to generate an error message
+func invalidField(field string, w http.ResponseWriter, r *http.Request) {
+	errMsg := fmt.Sprintf("field %s have invalid type", field)
+	c := Response{errMsg, nil} // wrap in 'response'
+	j, err := json.Marshal(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return // ?
+	}
+
+	w.WriteHeader(http.StatusBadRequest) // 400
+	w.Write(j)                           // the content
+}
 
 // PUT -> add (incorrect, but still)
 func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
@@ -370,7 +385,52 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 	// 2) insertion with incorrect args
 	// 3) invalid field TYPE value (from tests)
 
-	
+	t, tableExists := h.Tables[q.TableName]
+
+	if q.RecordId != nil || !tableExists {
+		// bad request: either it's a request for a particular record or the table does not exist
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return // ?
+	}
+
+	jsonBody, err := ioutil.ReadAll(r.Body) // raw json body
+	if err != nil {
+		panic(err) // shortcut to 500
+	}
+
+	body := make(map[string]interface{})
+	json.Unmarshal(jsonBody, &body) // check for errors
+
+	// ---
+
+	for _, f := range t.Fields {
+		k := strings.ToLower(f.Name) // key
+		fieldValue, valuePresent := body[k]
+
+		// can be null and actually not present -> skip
+		if f.IsPrimary || (f.IsNullable && !valuePresent) {
+			continue
+		}
+
+		switch fieldValue.(type) {
+		case float64: // weird part over here (dunno)
+			if f.Type == "string" {
+				invalidField(k, w, r)
+				return
+			}
+		case string:
+			if f.Type == "int" {
+				invalidField(k, w, r)
+				return
+			}
+		default:
+			// hopefully will never happen
+			invalidField(k, w, r)
+			return
+		}
+	}
+
+	fmt.Println(q)
 }
 
 // ---
@@ -408,7 +468,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		h.handleShow(w, r, q)
 	// case "POST": _
-	case "PUT": 
+	case "PUT":
 		h.handleAdd(w, r, q)
 	// case "DELETE":
 	default:
