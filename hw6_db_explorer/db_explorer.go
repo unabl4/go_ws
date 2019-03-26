@@ -450,7 +450,98 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 	}
 
 	w.Write(j)
-}
+} // end of 'handleAdd'
+
+// POST -> update (incorrect, but still)
+func (h *Handler) handleUpdate(w http.ResponseWriter, r *http.Request, q DbQuery) {
+	t, tableExists := h.Tables[q.TableName]
+
+	if q.RecordId == nil || !tableExists {
+		// the request must be made for a particular record
+		// TODO: what if it does not exist?
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return // ?
+	}
+
+	jsonBody, err := ioutil.ReadAll(r.Body) // raw json body
+	if err != nil {
+		panic(err) // shortcut to 500
+	}
+
+	body := make(map[string]interface{})
+	json.Unmarshal(jsonBody, &body) // check for errors
+
+	// ---
+
+	var primaryKey string
+	placeholders := []string{}
+	placeholderVals := []interface{}{}
+	fieldNames := []string{}
+
+	for _, f := range t.Fields {
+		k := strings.ToLower(f.Name) // key
+		fieldValue, valuePresent := body[k]
+
+		if f.IsPrimary {
+			if valuePresent {
+				// uh-oh -> not good
+				invalidField(k, w, r)
+				return
+			} else {
+				primaryKey = f.Name
+				continue
+			}
+		}
+
+		// not present -> skip
+		if !valuePresent {
+			continue
+		}
+
+		switch fieldValue.(type) {
+		case float64: // weird part over here (dunno)
+			if f.Type == "string" {
+				invalidField(k, w, r)
+				return
+			}
+		case string:
+			if f.Type == "int" {
+				invalidField(k, w, r)
+				return
+			}
+		case nil: // quite special case
+			if !f.IsNullable {
+				invalidField(k, w, r)
+				return
+			}
+		default:
+			// hopefully will never happen
+			invalidField(k, w, r)
+			return
+		}
+
+		fieldNames = append(fieldNames, fmt.Sprintf("%s = ?", f.Name))
+		placeholders = append(placeholders, "?")
+		placeholderVals = append(placeholderVals, fieldValue)
+	}
+
+	placeholderVals = append(placeholderVals, q.RecordId) // primary key
+
+	queryStr := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", t.Name, strings.Join(fieldNames, ","), primaryKey)
+	result, err := h.DB.Exec(queryStr, placeholderVals...)
+
+	affected, err := result.RowsAffected()
+	// TODO: handle err panic
+	response := map[string]interface{}{"updated": affected}
+	c := Response{"", response}
+	j, err := json.Marshal(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return // ?
+	}
+
+	w.Write(j)
+} // end of 'handleUpdate'
 
 // ---
 
@@ -486,7 +577,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		h.handleShow(w, r, q)
-	// case "POST": _
+	case "POST":
+		h.handleUpdate(w, r, q)
 	case "PUT":
 		h.handleAdd(w, r, q)
 	// case "DELETE":
