@@ -114,13 +114,22 @@ func (h *Handler) Initialize() error {
 			return err
 		}
 
-		fields, err := getTableFields(h.DB, n) // ?
+		t := Table{}
+		t.Name = n
+		// tables to be defined later
+
+		h.Tables[n] = t
+	}
+
+	// separate loop to get the fields
+	for _, t := range h.Tables {
+		fields, err := getTableFields(h.DB, t.Name) // ?
 		if err != nil {
 			return err
 		}
 
-		t := Table{n, fields}
-		h.Tables[n] = t
+		t.Fields = fields
+		h.Tables[t.Name] = t
 	}
 
 	return nil // no errors
@@ -386,7 +395,6 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 	// 3) invalid field TYPE value (from tests)
 
 	t, tableExists := h.Tables[q.TableName]
-
 	if q.RecordId != nil || !tableExists {
 		// bad request: either it's a request for a particular record or the table does not exist
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -402,6 +410,8 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 	json.Unmarshal(jsonBody, &body) // check for errors
 
 	// ---
+
+	var primaryKey string
 	placeholders := []string{}
 	placeholderVals := []interface{}{}
 	fieldNames := []string{}
@@ -410,26 +420,42 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 		k := strings.ToLower(f.Name) // key
 		fieldValue, valuePresent := body[k]
 
-		// can be null and actually not present -> skip
-		if f.IsPrimary || (f.IsNullable && !valuePresent) {
+		if f.IsPrimary {
+			primaryKey = f.Name
 			continue
 		}
 
-		switch fieldValue.(type) {
-		case float64: // weird part over here (dunno)
-			if f.Type == "string" {
+		if !valuePresent {
+			// value not present -> set default
+			if f.IsNullable {
+				fieldValue = nil
+			} else {
+				if f.Type == "string" {
+					fieldValue = ""
+				} else if f.Type == "int" {
+					fieldValue = 0
+				} else {
+					panic("unknown type")
+				}
+			}
+		} else {
+			// some value is already set -> need to validate
+			switch fieldValue.(type) {
+			case float64: // weird part over here (dunno)
+				if f.Type == "string" {
+					invalidField(k, w, r)
+					return
+				}
+			case string:
+				if f.Type == "int" {
+					invalidField(k, w, r)
+					return
+				}
+			default:
+				// hopefully will never happen
 				invalidField(k, w, r)
 				return
 			}
-		case string:
-			if f.Type == "int" {
-				invalidField(k, w, r)
-				return
-			}
-		default:
-			// hopefully will never happen
-			invalidField(k, w, r)
-			return
 		}
 
 		fieldNames = append(fieldNames, f.Name)
@@ -441,7 +467,7 @@ func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request, q DbQuery) {
 	result, err := h.DB.Exec(queryStr, placeholderVals...)
 
 	id, err := result.LastInsertId()
-	response := map[string]interface{}{"id": id} // the main ID response
+	response := map[string]interface{}{primaryKey: id} // the main ID response
 	c := Response{"", response}
 	j, err := json.Marshal(c)
 	if err != nil {
@@ -543,6 +569,43 @@ func (h *Handler) handleUpdate(w http.ResponseWriter, r *http.Request, q DbQuery
 	w.Write(j)
 } // end of 'handleUpdate'
 
+// DELETE
+func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, q DbQuery) {
+	t, tableExists := h.Tables[q.TableName]
+	if q.RecordId == nil || !tableExists {
+		// the request must be made for a particular record
+		// TODO: what if it does not exist?
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return // ?
+	}
+
+	// ---
+
+	var primaryKey string
+
+	for _, f := range t.Fields {
+		if f.IsPrimary {
+			primaryKey = f.Name
+			break // found
+		}
+	}
+
+	queryStr := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", t.Name, primaryKey)
+	result, err := h.DB.Exec(queryStr, q.RecordId)
+
+	affected, err := result.RowsAffected()
+	// TODO: handle err panic
+	response := map[string]interface{}{"deleted": affected}
+	c := Response{"", response}
+	j, err := json.Marshal(c)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return // ?
+	}
+
+	w.Write(j)
+} // end of 'handleDelete'
+
 // ---
 
 /*
@@ -581,7 +644,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleUpdate(w, r, q)
 	case "PUT":
 		h.handleAdd(w, r, q)
-	// case "DELETE":
+	case "DELETE":
+		h.handleDelete(w, r, q)
 	default:
 		http.Error(w, "bad request", http.StatusBadRequest) // ?
 	}
