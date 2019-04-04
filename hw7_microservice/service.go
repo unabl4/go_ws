@@ -7,7 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	_ "fmt"
+
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+
 	"log"
 	"net"
 )
@@ -33,22 +37,42 @@ func (s BizSrv) Test(ctx context.Context, _ *Nothing) (*Nothing, error) {
 // streaming services
 
 type AdmSrv struct {
+	ctx context.Context // cancellation, streaming control
+
+	// channel-specific logic
+	logChan        chan *Event      // new event
+	logSubChan     chan chan *Event // new subscriber
+	logSubscribers []chan *Event    // list of subscribers
 }
 
-func (s AdmSrv) Logging(_ *Nothing, srv Admin_LoggingServer) error {
-	return nil // ?
+func (s *AdmSrv) Logging(_ *Nothing, srv Admin_LoggingServer) error {
+	// fmt.Println("ADMSRV CALLED")
+
+	ch := make(chan *Event, 0)
+	s.logSubChan <- ch
+
+	for {
+		select {
+		case event := <-ch:
+			srv.Send(event)
+		case <-s.ctx.Done():
+			return nil
+		}
+	}
+
+	return nil
 }
 
 func (s AdmSrv) Statistics(interval *StatInterval, srv Admin_StatisticsServer) error {
 	return nil
 }
 
-type ACL map[string][]string
+type ACL map[string][]string // 'consumer' -> list of endpoints
 
 // ---
+
 // union type
 type Srv struct {
-	ctx context.Context // cancellation
 	acl ACL
 
 	BizSrv
@@ -58,6 +82,7 @@ type Srv struct {
 // ===
 
 func StartMyMicroservice(ctx context.Context, listenAddr string, aclData string) error {
+	// parse ACL
 	var acl ACL
 	if err := json.Unmarshal([]byte(aclData), &acl); err != nil {
 		return err
@@ -67,15 +92,42 @@ func StartMyMicroservice(ctx context.Context, listenAddr string, aclData string)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(unaryInterceptor),
-	)
 
-	srv := &Srv{ctx: ctx, acl: acl}
+	srv := &Srv{AdmSrv: AdmSrv{ctx: ctx}, acl: acl}
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(srv.unaryInterceptor),
+		grpc.StreamInterceptor(srv.streamInterceptor),
+	)
 
 	// register the services
 	RegisterBizServer(grpcServer, srv)
 	RegisterAdminServer(grpcServer, srv) // streaming?
+
+	// ---
+	// prepare the channels, attach the handler
+	srv.logChan = make(chan *Event, 0)         // broadcast events
+	srv.logSubChan = make(chan chan *Event, 0) // broadcast new subscribers
+
+	go func() {
+		for {
+			select {
+			case event := <-srv.logChan: // new event (broadcast)
+				// fmt.Println("EVENT!", event)
+				// fmt.Println("SUBS:", srv.logSubscribers)
+
+				// deliver the 'event' to all the subscribers
+				for _, subChan := range srv.logSubscribers {
+					subChan <- event // notify the subscriber
+				}
+			case newSub := <-srv.logSubChan:
+				// add new 'subscriber' to the list of subscribers
+				// fmt.Println("NEW SUB:", newSub)
+				srv.logSubscribers = append(srv.logSubscribers, newSub)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// ---
 
@@ -98,6 +150,50 @@ func StartMyMicroservice(ctx context.Context, listenAddr string, aclData string)
 
 // ---
 
-func unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func (s *Srv) unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	// fmt.Println("UNARY INTERCEPTOR", req)
+
+	// get meta
+	meta, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, grpc.Errorf(codes.Unauthenticated, "can't get metadata")
+	}
+
+	consumer, ok := meta["consumer"]
+	if !ok {
+		return nil, grpc.Errorf(codes.Unauthenticated, "can't get metadata")
+	}
+
+	// log the unary event
+	s.logChan <- &Event{
+		Consumer: consumer[0],
+		Method:   info.FullMethod,
+		Host:     "127.0.0.1:8083",
+	}
+
 	return handler(ctx, req)
+}
+
+func (s *Srv) streamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	// fmt.Println("STREAM INTERCEPTOR", srv)
+
+	// get meta
+	meta, ok := metadata.FromIncomingContext(ss.Context())
+	if !ok {
+		return grpc.Errorf(codes.Unauthenticated, "can't get metadata")
+	}
+
+	consumer, ok := meta["consumer"]
+	if !ok {
+		return grpc.Errorf(codes.Unauthenticated, "can't get metadata")
+	}
+
+	// log the stream event
+	s.logChan <- &Event{
+		Consumer: consumer[0],
+		Method:   info.FullMethod,
+		Host:     "127.0.0.1:8083",
+	}
+
+	return handler(srv, ss)
 }
