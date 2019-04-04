@@ -14,6 +14,8 @@ import (
 
 	"log"
 	"net"
+
+	"strings"
 )
 
 type BizSrv struct {
@@ -150,8 +152,51 @@ func StartMyMicroservice(ctx context.Context, listenAddr string, aclData string)
 
 // ---
 
+func (s *Srv) checkPermissions(ctx context.Context, method string) error {
+	// get meta
+	meta, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return grpc.Errorf(codes.Unauthenticated, "can't get metadata")
+	}
+
+	consumer, ok := meta["consumer"]
+	if !ok {
+		return grpc.Errorf(codes.Unauthenticated, "can't get metadata")
+	}
+
+	methods, ok := s.acl[consumer[0]]
+	if !ok {
+		// no entries -> not allowed
+		return grpc.Errorf(codes.Unauthenticated, "unauthorized")
+	}
+
+	// extract the method name from the full request 'path'
+	methodName := func(input string) string {
+		methodParts := strings.Split(input, "/")
+		return methodParts[len(methodParts)-1] // the last part
+	}
+
+	reqMethodName := methodName(method)
+	for _, method := range methods {
+		methodName := methodName(method)
+
+		if methodName == "*" || methodName == reqMethodName {
+			return nil // access granted
+		}
+	}
+
+	return grpc.Errorf(codes.Unauthenticated, "unauthorized")
+}
+
+// ---
+
 func (s *Srv) unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	// fmt.Println("UNARY INTERCEPTOR", req)
+
+	// check necessary permissions
+	if err := s.checkPermissions(ctx, info.FullMethod); err != nil {
+		return nil, err
+	}
 
 	// get meta
 	meta, ok := metadata.FromIncomingContext(ctx)
@@ -176,6 +221,11 @@ func (s *Srv) unaryInterceptor(ctx context.Context, req interface{}, info *grpc.
 
 func (s *Srv) streamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	// fmt.Println("STREAM INTERCEPTOR", srv)
+
+	// check necessary permissions
+	if err := s.checkPermissions(ss.Context(), info.FullMethod); err != nil {
+		return err
+	}
 
 	// get meta
 	meta, ok := metadata.FromIncomingContext(ss.Context())
