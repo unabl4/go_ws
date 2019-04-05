@@ -16,6 +16,7 @@ import (
 	"net"
 
 	"strings"
+	"time"
 )
 
 type BizSrv struct {
@@ -38,6 +39,12 @@ func (s BizSrv) Test(ctx context.Context, _ *Nothing) (*Nothing, error) {
 // ---
 // streaming services
 
+// aux event visit struct for statistics
+type Visit struct {
+	Method   string
+	Consumer string
+}
+
 type AdmSrv struct {
 	ctx context.Context // cancellation, streaming control
 
@@ -45,6 +52,10 @@ type AdmSrv struct {
 	logChan        chan *Event      // new event
 	logSubChan     chan chan *Event // new subscriber
 	logSubscribers []chan *Event    // list of subscribers
+
+	statChan        chan *Visit      // new stat
+	statSubChan     chan chan *Visit // new stat subscriber
+	statSubscribers []chan *Visit    // list of stat subscribers
 }
 
 func (s *AdmSrv) Logging(_ *Nothing, srv Admin_LoggingServer) error {
@@ -61,15 +72,37 @@ func (s *AdmSrv) Logging(_ *Nothing, srv Admin_LoggingServer) error {
 			return nil
 		}
 	}
-
-	return nil
 }
 
 func (s AdmSrv) Statistics(interval *StatInterval, srv Admin_StatisticsServer) error {
-	return nil
+	ch := make(chan *Visit, 0)
+	s.statSubChan <- ch
+
+	period := time.Second * time.Duration(interval.IntervalSeconds)
+	ticker := time.NewTicker(period)
+	stat := &Stat{
+		ByMethod:   make(map[string]uint64),
+		ByConsumer: make(map[string]uint64),
+	}
+	for {
+		select {
+		case v := <-ch:
+			stat.ByMethod[v.Method] += 1
+			stat.ByConsumer[v.Consumer] += 1
+		case <-ticker.C:
+			// send the statistics
+			srv.Send(stat)
+			// reset the statistics (= empty maps)
+			stat.ByMethod = map[string]uint64{}
+			stat.ByConsumer = map[string]uint64{}
+		case <-s.ctx.Done():
+			ticker.Stop() // save resources
+			return nil
+		}
+	}
 }
 
-type ACL map[string][]string // 'consumer' -> list of endpoints
+type ACL map[string][]string // 'consumer' -> list of accessible methods/endpoints
 
 // ---
 
@@ -110,6 +143,9 @@ func StartMyMicroservice(ctx context.Context, listenAddr string, aclData string)
 	srv.logChan = make(chan *Event, 0)         // broadcast events
 	srv.logSubChan = make(chan chan *Event, 0) // broadcast new subscribers
 
+	srv.statChan = make(chan *Visit, 0)         // broadcast stat events
+	srv.statSubChan = make(chan chan *Visit, 0) // broadcast new stat subscribers
+
 	go func() {
 		for {
 			select {
@@ -125,6 +161,27 @@ func StartMyMicroservice(ctx context.Context, listenAddr string, aclData string)
 				// add new 'subscriber' to the list of subscribers
 				// fmt.Println("NEW SUB:", newSub)
 				srv.logSubscribers = append(srv.logSubscribers, newSub)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case stat := <-srv.statChan: // new event (broadcast)
+				// fmt.Println("EVENT!", event)
+				// fmt.Println("SUBS:", srv.logSubscribers)
+
+				// deliver the 'event' to all the subscribers
+				for _, statChan := range srv.statSubscribers {
+					statChan <- stat // notify the subscriber
+				}
+			case newSub := <-srv.statSubChan:
+				// add new 'subscriber' to the list of subscribers
+				// fmt.Println("NEW SUB:", newSub)
+				srv.statSubscribers = append(srv.statSubscribers, newSub)
 			case <-ctx.Done():
 				return
 			}
@@ -215,6 +272,7 @@ func (s *Srv) unaryInterceptor(ctx context.Context, req interface{}, info *grpc.
 		Method:   info.FullMethod,
 		Host:     "127.0.0.1:8083",
 	}
+	s.statChan <- &Visit{Method: info.FullMethod, Consumer: consumer[0]}
 
 	return handler(ctx, req)
 }
@@ -244,6 +302,7 @@ func (s *Srv) streamInterceptor(srv interface{}, ss grpc.ServerStream, info *grp
 		Method:   info.FullMethod,
 		Host:     "127.0.0.1:8083",
 	}
+	s.statChan <- &Visit{Method: info.FullMethod, Consumer: consumer[0]}
 
 	return handler(srv, ss)
 }
