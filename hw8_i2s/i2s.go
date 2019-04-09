@@ -25,7 +25,31 @@ func i2s(in interface{}, out interface{}) error {
 
 	outElem := v.Elem() // pointer inner
 
+	// fmt.Println(inType, inVal, outElem, outElem.Kind())
+
 	switch outElem.Kind() {
+	case reflect.Struct:
+		fmt.Println("This is a struct!", in)
+		fmt.Println(inVal)
+
+		if inVal.Kind() == reflect.Map {
+			for i := 0; i < outElem.NumField(); i++ { // what to use as the 'lowest denominator', if needed at all?
+				field := outElem.Type().Field(i)
+				fieldName := field.Name
+				fieldKeyValue := reflect.ValueOf(fieldName) // construct the 'Value' object
+				fmt.Println("Getting value for", fieldKeyValue)
+				fieldRef := inVal.MapIndex(fieldKeyValue)
+				if fieldRef.Kind() == reflect.Invalid {
+					fmt.Println("INVALID!", fieldName)
+				} else {
+					fieldValue := fieldRef.Elem() // entry ref
+					fmt.Println(i, fieldName, fieldValue, fieldValue.Kind())
+				}
+			}
+
+			fmt.Println("---")
+		}
+
 	case reflect.Slice:
 		// we are given a slice (array)
 		// slice of what?
