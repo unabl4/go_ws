@@ -6,9 +6,26 @@ import (
 	"reflect"
 )
 
+type I interface{} // alias
+
+func extractValue(v reflect.Value) I {
+	fmt.Println("extractValue", v, v.Kind())
+	// ---
+	switch v.Kind() {
+	case reflect.Float64: // ?; and not sure about 'float'
+		return int64(v.Float())
+	case reflect.String:
+		return v.String()
+	case reflect.Bool:
+		return v.Bool()
+	}
+
+	return nil
+}
+
 func i2s(in interface{}, out interface{}) error {
 	// todo
-	// fmt.Println("IN", in, "OUT", out)
+	fmt.Println("IN:", in, "| OUT:", out)
 
 	v := reflect.ValueOf(out)
 	if v.Kind() != reflect.Ptr { // ?
@@ -29,28 +46,32 @@ func i2s(in interface{}, out interface{}) error {
 
 	switch outElem.Kind() {
 	case reflect.Struct:
-		fmt.Println("This is a struct!", in)
-		fmt.Println(inVal)
+		fmt.Println("Input->Struct!")
+		fmt.Println(inVal, inVal.Kind(), inType)
 
 		if inVal.Kind() == reflect.Map {
 			for i := 0; i < outElem.NumField(); i++ { // what to use as the 'lowest denominator', if needed at all?
-				field := outElem.Type().Field(i)
+				field := outElem.Type().Field(i) // 'description' of the field
 				fieldName := field.Name
-				fieldKeyValue := reflect.ValueOf(fieldName) // construct the 'Value' object
-				fmt.Println("Getting value for", fieldKeyValue)
-				fieldRef := inVal.MapIndex(fieldKeyValue)
-				if fieldRef.Kind() == reflect.Invalid {
-					fmt.Println("INVALID!", fieldName)
-				} else {
-					fieldValue := fieldRef.Elem() // entry ref
-					fmt.Println(i, fieldName, fieldValue, fieldValue.Kind())
+				fieldKeyValue := reflect.ValueOf(fieldName) // construct the string key 'Value' object
+				input := inVal.MapIndex(fieldKeyValue)      // get the value
+
+				// RECURSION CALL
+				fmt.Println("CALL")
+				output := outElem.Field(i)
+				callInput := map[I]I{fieldName: input.Elem()} // single elem
+				if err := i2s(callInput, &output); err != nil {
+					return err
 				}
 			}
 
 			fmt.Println("---")
+		} else {
+			fmt.Println("WRONG", inVal.Kind())
 		}
-
 	case reflect.Slice:
+		fmt.Println("SLICE IT IS")
+
 		// we are given a slice (array)
 		// slice of what?
 		T := outElem.Type().Elem() // array -> single elem type
@@ -93,6 +114,10 @@ func i2s(in interface{}, out interface{}) error {
 			// add the new element/entry/record to the output slice
 			outElem.Set(reflect.Append(outElem, newRecord)) // add elem to struct
 		}
+
+	default:
+		// recursion base case?
+		fmt.Println("SOMETHING")
 	}
 
 	// ---
