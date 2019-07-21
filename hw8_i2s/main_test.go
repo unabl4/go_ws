@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
-	// "fmt"
 )
 
 type Simple struct {
@@ -24,10 +23,9 @@ func TestSimple(t *testing.T) {
 		Active:   true,
 	}
 	jsonRaw, _ := json.Marshal(expected)
-	// fmt.Println(string(jsonRaw))
 
 	var tmpData interface{}
-	json.Unmarshal(jsonRaw, &tmpData)
+	json.Unmarshal(jsonRaw, &tmpData) // -> map[string]interface{}
 
 	result := new(Simple)
 	err := i2s(tmpData, result)
@@ -59,10 +57,9 @@ func TestComplex(t *testing.T) {
 	}
 
 	jsonRaw, _ := json.Marshal(expected)
-	// fmt.Println(string(jsonRaw))
 
 	var tmpData interface{}
-	json.Unmarshal(jsonRaw, &tmpData)
+	json.Unmarshal(jsonRaw, &tmpData)	// -> map[string]interface{}
 
 	result := new(Complex)
 	err := i2s(tmpData, result)
@@ -86,7 +83,7 @@ func TestSlice(t *testing.T) {
 	jsonRaw, _ := json.Marshal(expected)
 
 	var tmpData interface{}
-	json.Unmarshal(jsonRaw, &tmpData)
+	json.Unmarshal(jsonRaw, &tmpData)	// -> slice of map[string]interface{}
 
 	result := []Simple{}
 	err := i2s(tmpData, &result)

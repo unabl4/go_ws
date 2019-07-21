@@ -2,110 +2,107 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 )
 
 func i2s(in interface{}, out interface{}) error {
-	// todo
-	// fmt.Println("IN", in, "OUT", out)
-
-	v := reflect.ValueOf(out)
-	if v.Kind() != reflect.Ptr { // ?
+	Vout := reflect.ValueOf(out)
+	if Vout.Kind() != reflect.Ptr { // ?
 		// the input structure MUST be a pointer, PANIC otherwise
-		return errors.New("The input is not a pointer")
+		return errors.New("the input is not a pointer")
 	}
 
 	// ---
 
-	inType := reflect.TypeOf(in).Kind()
-	inVal := reflect.ValueOf(in)
+	Tin := reflect.TypeOf(in)
+	Vin := reflect.ValueOf(in) // true value behind the `interface`
+	Kin := Tin.Kind() // higher ~type?
 
-	// ---
+	V := Vout.Elem()	// -> reflect.Value (pointer de-reference)
+	Kout := V.Kind()	// Kind of output elem (that it points to)
 
-	outElem := v.Elem() // pointer inner
-
-	// fmt.Println(inType, inVal, outElem, outElem.Kind())
-
-	switch outElem.Kind() {
+	switch Kout {
 	case reflect.Struct:
-		fmt.Println("This is a struct!", in)
-		fmt.Println(inVal)
-
-		if inVal.Kind() == reflect.Map {
-			for i := 0; i < outElem.NumField(); i++ { // what to use as the 'lowest denominator', if needed at all?
-				field := outElem.Type().Field(i)
-				fieldName := field.Name
-				fieldKeyValue := reflect.ValueOf(fieldName) // construct the 'Value' object
-				fmt.Println("Getting value for", fieldKeyValue)
-				fieldRef := inVal.MapIndex(fieldKeyValue)
-				if fieldRef.Kind() == reflect.Invalid {
-					fmt.Println("INVALID!", fieldName)
-				} else {
-					fieldValue := fieldRef.Elem() // entry ref
-					fmt.Println(i, fieldName, fieldValue, fieldValue.Kind())
-				}
-			}
-
-			fmt.Println("---")
+		// we are given a structure
+		if Kin != reflect.Map {
+			return errors.New("struct out expects a map in")
 		}
 
+		for i := 0; i < V.NumField(); i++ {
+			field := V.Type().Field(i)
+			fieldName := field.Name	// -> string
+
+			mapRef := Vin.MapIndex(reflect.ValueOf(fieldName))
+			mapValue := mapRef.Elem() // entry ref
+			mapValueType := mapValue.Type().String()
+
+			f := V.FieldByName(fieldName)	// field object
+
+			// fmt.Println(i, fieldName, mapValue, mapValue.Kind())
+			// type correction. e.g float64 -> int
+
+			switch f.Kind() {
+			case reflect.Int:
+				if mapValueType != "float64" {
+					return errors.New("incompatible types")
+				}
+
+				v := int(mapValue.Float())	// float64 -> int trick
+				// alternatively, we could use 'SetInt'
+				f.Set(reflect.ValueOf(v))
+			case reflect.String:
+				if mapValueType != "string" {
+					return errors.New("incompatible types")
+				}
+
+				v := mapValue.String()
+				// alternatively, we could use 'SetString'
+				f.Set(reflect.ValueOf(v))
+			case reflect.Bool:
+				if mapValueType != "bool" {
+					return errors.New("incompatible types")
+				}
+				v := mapValue.Bool()
+
+				// alternatively, we could use 'SetBool'
+				f.Set(reflect.ValueOf(v))
+
+			default:
+				// recursion?
+				recIn := mapValue.Interface()
+				recOut := f.Addr().Interface()	// '.Addr' -> pointer (ref-type anyway?)
+
+				z := i2s(recIn, recOut)
+				if z != nil {
+					return z
+				}
+			}
+		}
+
+	// special
 	case reflect.Slice:
-		// we are given a slice (array)
-		// slice of what?
-		T := outElem.Type().Elem() // array -> single elem type
-
-		// if the 'out' = slice, then the 'in' must also be slice (to match)
-		if inType != reflect.Slice {
-			outElem.Set(reflect.Zero(outElem.Type())) // empty slice?
-			return errors.New("mismatching input and ouput types")
+		// ~array
+		if Tin.Kind() != reflect.Slice {
+			return errors.New("slice expected")
 		}
 
-		// inval = slice => .Len() is available
-		for i := 0; i < inVal.Len(); i++ { // correct way to iterate
-			sliceElem := inVal.Index(i).Elem() // entry
-			if sliceElem.Kind() != reflect.Map {
-				panic("NO!") // should not happen, but still
+		for i := 0; i < Vin.Len(); i++ {
+			elementType := V.Type().Elem()	// single element type
+			// 'reflect.Zero' should NOT be used as not addressable/settable
+			newElement := reflect.New(elementType)	// returns a pointer (addressable/settable)
+
+			// fmt.Println("NEW ELEMENT: ", newElement)
+			err := i2s(Vin.Index(i).Interface(), newElement.Interface())
+			if err != nil {
+				return err
 			}
 
-			newRecord := reflect.New(T).Elem() // create new of type of the slice
-
-			// change/populate the map 'record' keys
-			for _, mapKey := range sliceElem.MapKeys() {
-				keyName := mapKey.String()
-				field := newRecord.FieldByName(keyName) // get the ref in the 'out' structure
-				switch field.Kind() {
-				case reflect.Int: // ?; and not sure about 'float'
-					innerValue := sliceElem.MapIndex(mapKey).Elem()
-					field.SetInt(int64(innerValue.Float())) // float -> int trick
-				case reflect.String:
-					innerValue := sliceElem.MapIndex(mapKey).Elem()
-					field.SetString(innerValue.String())
-				case reflect.Bool:
-					innerValue := sliceElem.MapIndex(mapKey).Elem()
-					field.SetBool(innerValue.Bool())
-				default:
-					// not sure about this part, probably recursion
-					fmt.Println("default")
-				}
-			}
-
-			// add the new element/entry/record to the output slice
-			outElem.Set(reflect.Append(outElem, newRecord)) // add elem to struct
+			// and, finally, append back to the original array
+			V.Set(reflect.Append(V, newElement.Elem()))
 		}
 	}
 
-	// ---
-
-	// if elem.Kind() == reflect.Struct {
-	// 	fmt.Println("STRUCT IT IS")
-	// 	for i := 0; i < elem.NumField(); i++ {
-	// 		f := elem.Field(i)
-	// 		fmt.Printf("%d: %s %s = %v\n", i, typeOfT.Field(i).Name, f.Type(), f.Interface())
-	// 	}
-	// }
-
-	return nil
+	return nil	// no errors have occurred
 }
 
 func main() {
